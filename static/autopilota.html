@@ -357,6 +357,7 @@
             "usb1": { nome: "EMEET C960 (USB 1)", port: 8081 },
             "usb2": { nome: "EMEET C960 (USB 2)", port: 8082 }
         };
+        const CAMERA_HOST = new URLSearchParams(window.location.search).get('cameraHost') || '100.73.187.83';
 
         let currentMainCam = "usb1";
         let currentFps = 10;
@@ -407,9 +408,7 @@
         function initVideoStream() {
             const fpvVideo = document.getElementById('fpv-video');
             const placeholder = document.getElementById('video-placeholder');
-            const host = window.location.hostname || '127.0.0.1';
-           
-            fpvVideo.src = `http://${host}:${CAMS[currentMainCam].port}/stream`;
+            fpvVideo.src = `http://${CAMERA_HOST}:${CAMS[currentMainCam].port}/stream`;
             fpvVideo.classList.remove('hidden');
             if (placeholder) placeholder.classList.add('hidden');
         }
@@ -420,8 +419,7 @@
             fpvVideo.classList.add('hidden');
             if (placeholder) placeholder.classList.remove('hidden');
             setTimeout(() => {
-                const host = window.location.hostname || '127.0.0.1';
-                fpvVideo.src = `http://${host}:${CAMS[currentMainCam].port}/stream?t=${Date.now()}`;
+                fpvVideo.src = `http://${CAMERA_HOST}:${CAMS[currentMainCam].port}/stream?t=${Date.now()}`;
                 fpvVideo.classList.remove('hidden');
                 if (placeholder) placeholder.classList.add('hidden');
             }, 2500);
@@ -716,7 +714,6 @@
 
         // --- REGIA MULTI-CAMERA ---
         function renderCamsSidebar() {
-            const host = window.location.hostname || '127.0.0.1';
             const sidebar = document.getElementById('cams-sidebar');
             sidebar.innerHTML = "";
             document.getElementById('cam-active-name').innerText = CAMS[currentMainCam].nome;
@@ -728,7 +725,7 @@
                     card.onclick = () => switchCamera(key);
                     card.innerHTML = `
                         <div class="w-full h-20 bg-black rounded-lg overflow-hidden relative">
-                            <img id="thumb-${key}" src="http://${host}:${CAMS[key].port}/snapshot" class="w-full h-full object-cover" onerror="this.src=''; this.alt='NO SIGNAL';">
+                            <img id="thumb-${key}" src="http://${CAMERA_HOST}:${CAMS[key].port}/snapshot" class="w-full h-full object-cover" onerror="this.src=''; this.alt='NO SIGNAL';">
                             <div class="absolute inset-0 bg-sky-600/30 opacity-0 hover:opacity-100 flex items-center justify-center font-bold text-[9px] text-white">PRIMO PIANO ↗</div>
                         </div>
                         <span class="text-[9px] font-bold text-slate-300 px-1 truncate">${CAMS[key].nome}</span>
@@ -739,14 +736,12 @@
         }
 
         async function switchCamera(camKey) {
-            const host = window.location.hostname || '127.0.0.1';
             currentMainCam = camKey;
-            document.getElementById('fpv-video').src = `http://${host}:${CAMS[camKey].port}/stream?t=${Date.now()}`;
+            document.getElementById('fpv-video').src = `http://${CAMERA_HOST}:${CAMS[camKey].port}/stream?t=${Date.now()}`;
             renderCamsSidebar();
         }
 
         async function setVideoFps(fps) {
-            const host = window.location.hostname || '127.0.0.1';
             currentFps = fps;
             document.querySelectorAll('.fps-badge').forEach(b => {
                 b.classList.toggle('active', parseInt(b.innerText) === fps);
@@ -754,12 +749,11 @@
         }
 
         setInterval(() => {
-            const host = window.location.hostname || '127.0.0.1';
             if (!ws || ws.readyState !== WebSocket.OPEN) return;
             Object.keys(CAMS).forEach(key => {
                 if (key !== currentMainCam) {
                     const el = document.getElementById(`thumb-${key}`);
-                    if (el) el.src = `http://${host}:${CAMS[key].port}/snapshot?t=${Date.now()}`;
+                    if (el) el.src = `http://${CAMERA_HOST}:${CAMS[key].port}/snapshot?t=${Date.now()}`;
                 }
             });
         }, 1500);
