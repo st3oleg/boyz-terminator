@@ -2,7 +2,7 @@
 """
 Telemetry & Control Server - Terminator Rover
 - Hub centralizzato hardware: GPS (/dev/ttyS0), IMU (/dev/ttyAMA4), Motori MDDS30 (GPIO 23/19)
-- Streaming video ustreamer autopilota su porta 8081 con rilevamento hardware dinamico (/dev/v4l/by-id)
+- Streaming video ustreamer autopilota su porte 8081/8082 con rilevamento webcam USB (/dev/v4l/by-id)
 - Logica di trazione progressiva: START_PCT 20%, STEP_PCT 10%
 - Watchdog di sicurezza a 1.0 secondo per arresto motori
 - Registrazione tracce GPS su /home/terminator/Documents/missions/
@@ -33,7 +33,7 @@ from modules.motor import MotorDriver
 gps = GPSReader(port="/dev/ttyS0", baudrate=115200)
 imu = IMUReader(port="/dev/ttyAMA4", baudrate=115200)
 motors = None
-video_process = None
+video_processes = {}
 
 # =========================================================================
 # PARAMETRI E STATO TRAZIONE (LOGICA TEST_MOTORI.PY)
@@ -72,18 +72,20 @@ def calc_distance_m(lat1, lon1, lat2, lon2):
 
 
 def rileva_webcam_usb():
-    """Trova dinamicamente il nodo video primario reale escludendo i metadati."""
+    """Trova i nodi video USB, escludendo duplicati e nodi metadata."""
+    devices = []
     paths = sorted(glob.glob("/dev/v4l/by-id/*index0*"))
     for p in paths:
         reale = os.path.realpath(p)
-        if os.path.exists(reale):
-            return reale
-            
-    # Fallback su scansione nodi convenzionali
-    for dev in ["/dev/video1", "/dev/video0", "/dev/video2"]:
-        if os.path.exists(dev):
-            return dev
-    return None
+        if os.path.exists(reale) and reale not in devices:
+            devices.append(reale)
+
+    # Fallback per sistemi senza link stabili /dev/v4l/by-id.
+    if not devices:
+        for dev in sorted(glob.glob("/dev/video[0-9]*")):
+            if os.path.exists(dev) and dev not in devices:
+                devices.append(dev)
+    return devices[:2]
 
 
 # --- FUNZIONI DI SCALATA SIMMETRICHE (TEST_MOTORI.PY) ---
@@ -366,31 +368,37 @@ async def telemetry_broadcaster():
 # --- LIFECYCLE APPLICAZIONE ---
 
 async def on_startup(app):
-    global motors, video_process
+    global motors, video_processes
 
-    # 1. Rilevamento dinamico ed avvio streaming video ustreamer su porta 8081
+    # 1. Rilevamento dinamico ed avvio dei due stream USB su porte 8081/8082
     try:
         subprocess.run(["pkill", "-9", "-f", "ustreamer"], stderr=subprocess.DEVNULL)
         time.sleep(0.3)
 
-        cam_dev = rileva_webcam_usb()
-        if cam_dev:
+        cam_devices = rileva_webcam_usb()
+        if not cam_devices:
+            print("[WARN] Nessuna webcam USB rilevata per ustreamer.")
+        for index, cam_dev in enumerate(cam_devices, start=1):
+            port = 8080 + index
             cmd = [
                 "ustreamer",
                 f"--device={cam_dev}",
                 "--host=0.0.0.0",
-                "--port=8081",
+                f"--port={port}",
                 "--resolution=640x480",
                 "--desired-fps=15",
                 "--format=mjpeg"
             ]
-            video_process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            print(f"[INFO] Streaming video ustreamer avviato su porta 8081 ({cam_dev})")
-        else:
-            print("[WARN] Nessuna webcam USB rilevata per ustreamer.")
+            process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            video_processes[port] = process
+            time.sleep(0.2)
+            if process.poll() is None:
+                print(f"[INFO] Camera USB {index}: stream ustreamer su porta {port} ({cam_dev})")
+            else:
+                print(f"[WARN] ustreamer camera USB {index} terminato all'avvio ({cam_dev})")
     except Exception as e:
         print(f"[WARN] Impossibile avviare ustreamer: {e}")
-        video_process = None
+        video_processes = {}
 
     # 2. Inizializzazione Driver Motori MDDS30
     try:
@@ -407,14 +415,15 @@ async def on_startup(app):
 
 
 async def on_cleanup(app):
-    global motors, video_process
+    global motors, video_processes
 
-    if video_process:
+    for process in video_processes.values():
         try:
-            video_process.terminate()
-            video_process.wait(timeout=2)
+            process.terminate()
+            process.wait(timeout=2)
         except Exception:
-            video_process.kill()
+            process.kill()
+    video_processes = {}
 
     gps.stop()
     imu.stop()
@@ -448,7 +457,8 @@ if __name__ == '__main__':
     print("   SERVER TELEMETRIA, VIDEO E CONTROLLO TERMINATOR ATTIVO")
     print("   👉 Mappa Live:   http://100.73.187.83:8080")
     print("   👉 Autopilota:   http://100.73.187.83:8080/autopilota.html")
-    print("   👉 Video Stream: http://100.73.187.83:8081/stream")
+    print("   👉 Video Stream USB 1: http://100.73.187.83:8081/stream")
+    print("   👉 Video Stream USB 2: http://100.73.187.83:8082/stream")
     print("   👉 Watchdog:     1.0s Fail-Safe")
     print("=" * 60 + "\n")
     web.run_app(app, host='0.0.0.0', port=8080)
