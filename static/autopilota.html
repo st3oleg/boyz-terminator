@@ -1,0 +1,763 @@
+<!DOCTYPE html>
+<html lang="it" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Terminator - Postazione FPV & Autopilota</title>
+   
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script> tailwind.config = { darkMode: 'class', } </script>
+   
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&family=Inter:wght@400;600;800&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #020617; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+       
+        .hud-glass {
+            background-color: rgba(15, 23, 42, 0.88);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(56, 189, 248, 0.25);
+            box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.7);
+        }
+       
+        .compass-mask {
+            mask-image: linear-gradient(to right, transparent 0%, black 20%, black 80%, transparent 100%);
+            -webkit-mask-image: linear-gradient(to right, transparent 0%, black 20%, black 80%, transparent 100%);
+        }
+
+        .fps-badge { cursor: pointer; background: #1e293b; border: 1px solid #334155; padding: 2px 7px; border-radius: 5px; font-weight: 700; transition: all 0.15s; }
+        .fps-badge:hover, .fps-badge.active { background: #0284c7; color: #fff; border-color: #38bdf8; }
+
+        .dpad-btn {
+            background: rgba(30, 41, 59, 0.9);
+            border: 1px solid #475569;
+            color: #f8fafc;
+            font-weight: 800;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 8px;
+            user-select: none;
+            transition: all 0.1s;
+        }
+        .dpad-btn:active {
+            background: #0284c7;
+            border-color: #38bdf8;
+            transform: scale(0.95);
+        }
+
+        .gyro-disk {
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            border: 2px solid #38bdf8;
+            position: relative;
+            overflow: hidden;
+            background: #090d16;
+        }
+        .gyro-horizon {
+            position: absolute;
+            width: 90px;
+            height: 90px;
+            top: -21px;
+            left: -21px;
+            transition: transform 0.08s ease-out;
+        }
+        .gyro-sky {
+            height: 50%;
+            background: rgba(2, 132, 199, 0.5);
+            border-bottom: 2px solid #38bdf8;
+        }
+        .gyro-ground {
+            height: 50%;
+            background: rgba(180, 83, 9, 0.5);
+        }
+        .gyro-crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 22px;
+            height: 2px;
+            background: #facc15;
+            transform: translate(-50%, -50%);
+            box-shadow: 0 0 4px #facc15;
+            pointer-events: none;
+        }
+        .gyro-crosshair::after {
+            content: '';
+            position: absolute;
+            top: -4px;
+            left: 50%;
+            width: 2px;
+            height: 10px;
+            background: #facc15;
+            transform: translateX(-50%);
+        }
+
+        .rover-heading-icon {
+            transition: transform 0.1s ease-out;
+            transform-origin: center center;
+        }
+    </style>
+</head>
+<body class="text-slate-100 h-screen w-screen overflow-hidden select-none relative bg-black" onclick="unfocusInputs(event)">
+
+    <!-- SFONDO STREAMING VIDEO PRINCIPALE -->
+    <div class="absolute inset-0 z-0 flex items-center justify-center bg-black">
+        <img id="fpv-video" src="" alt="Camera Stream" class="w-full h-full object-contain aspect-video hidden" onerror="onStreamError()" />
+        <div id="video-placeholder" class="text-center p-6 flex flex-col items-center gap-2">
+            <span class="text-4xl animate-pulse">🤖</span>
+            <div class="font-bold text-slate-300 text-sm">POSTAZIONE TERMINATOR FPV</div>
+            <p class="text-xs text-slate-500 font-mono">Connessione video in corso su porta 8081...</p>
+        </div>
+    </div>
+
+    <!-- MIRINO CENTRALE OTTICO -->
+    <div class="absolute inset-0 z-10 flex items-center justify-center pointer-events-none opacity-25">
+        <div class="w-44 h-44 border border-sky-400 rounded-full flex items-center justify-center">
+            <div class="w-2 h-2 bg-sky-300 rounded-full"></div>
+        </div>
+        <div class="absolute w-72 h-[1px] bg-sky-400/50"></div>
+        <div class="absolute h-72 w-[1px] bg-sky-400/50"></div>
+    </div>
+
+    <!-- HUD SUPERIORE: BUSSOLA A NASTRO & ORIZZONTE ARTIFICIALE GYRO -->
+    <div class="absolute top-2 left-1/2 transform -translate-x-1/2 z-30 flex items-start gap-2.5 pointer-events-auto">
+        <div class="flex flex-col items-center">
+            <div class="relative w-72 md:w-80 h-8 compass-mask bg-slate-950/80 backdrop-blur-md border-b border-sky-500/40 rounded-b-xl flex items-center justify-center overflow-hidden">
+                <div id="compass-tape" class="text-xs font-mono font-bold tracking-widest text-sky-300 whitespace-nowrap transition-transform duration-75">
+                    N · · · NE · · · E · · · SE · · · S · · · SW · · · W · · · NW · · · N · · · NE · · · E
+                </div>
+                <div class="absolute w-0.5 h-full bg-red-500"></div>
+            </div>
+            <div class="text-[11px] font-mono font-black text-sky-400 mt-1 bg-slate-950/85 px-2.5 py-0.5 rounded-md border border-slate-800 flex items-center gap-2 shadow-lg">
+                <span><span id="heading-deg">000</span>° HEADING</span>
+                <span class="text-slate-600">|</span>
+                <span id="mode-badge" class="text-emerald-400 font-bold uppercase">MANUAL</span>
+                <span class="text-slate-600">|</span>
+                <span id="cam-active-name" class="text-amber-400 font-bold text-[10px]">USB 1</span>
+            </div>
+        </div>
+
+        <div class="hud-glass px-2.5 py-1.5 rounded-xl flex items-center gap-2.5 font-mono shadow-xl border border-sky-500/30">
+            <div class="gyro-disk shadow-inner">
+                <div id="gyro-horizon" class="gyro-horizon">
+                    <div class="gyro-sky"></div>
+                    <div class="gyro-ground"></div>
+                </div>
+                <div class="gyro-crosshair"></div>
+            </div>
+            <div class="flex flex-col justify-center gap-0.5 text-[10px]">
+                <div class="flex justify-between gap-2">
+                    <span class="text-slate-400 font-bold">ROLL:</span>
+                    <b id="gyro-roll" class="text-sky-300">+0.0°</b>
+                </div>
+                <div class="flex justify-between gap-2">
+                    <span class="text-slate-400 font-bold">PITCH:</span>
+                    <b id="gyro-pitch" class="text-sky-300">+0.0°</b>
+                </div>
+                <div id="gyro-status-badge" class="text-[8px] font-black tracking-wider text-emerald-400 uppercase">
+                    ● ASSETTO STABILE
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- BARRA DI STATO SUPERIORE SINISTRA -->
+    <div class="absolute top-3 left-3 z-30 flex items-center gap-2">
+        <div class="hud-glass p-2 rounded-2xl flex items-center gap-2.5 text-xs font-mono">
+            <a href="index.html" class="p-1.5 bg-slate-800 hover:bg-slate-700 rounded-xl text-slate-300 hover:text-white transition flex items-center gap-1 text-[10px] font-bold" title="Torna all'Hub Mappa Live">
+                ◀ Mappa
+            </a>
+            <div class="h-4 w-[1px] bg-slate-700"></div>
+            <div class="flex items-center gap-1.5">
+                <span id="conn-dot" class="w-2 h-2 rounded-full bg-yellow-400 animate-pulse"></span>
+                <span id="conn-status" class="text-[10px] font-bold text-yellow-400">AVVIO...</span>
+            </div>
+            <div class="h-4 w-[1px] bg-slate-700"></div>
+            <div class="text-[10px]">PING: <b id="ping-text" class="text-emerald-400">--</b>ms</div>
+            <div class="h-4 w-[1px] bg-slate-700"></div>
+            <div class="flex items-center gap-1">
+                <span class="text-[9px] text-slate-400">FPS:</span>
+                <span class="fps-badge text-[10px]" onclick="setVideoFps(2)">2</span>
+                <span class="fps-badge text-[10px]" onclick="setVideoFps(4)">4</span>
+                <span class="fps-badge text-[10px] active" onclick="setVideoFps(10)">10</span>
+                <span class="fps-badge text-[10px]" onclick="setVideoFps(30)">30</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- REGISTRAZIONE TRACCIA GPS FILARE -->
+    <div class="absolute left-3 top-16 z-30 w-80 hud-glass p-3 rounded-2xl flex flex-col gap-2.5 font-mono text-xs">
+        <div class="flex justify-between items-center border-b border-slate-700/80 pb-1.5">
+            <span class="font-bold text-sky-400 flex items-center gap-1.5">
+                <span>🌱</span> <span>REGISTRA TRACCIA FILARE</span>
+            </span>
+            <span class="text-[9px] text-emerald-400">Step: 25 cm</span>
+        </div>
+
+        <input id="rec-mission-name" type="text" value="Filare_1" class="bg-slate-900 border border-slate-700 px-2 py-1 rounded text-white text-xs w-full focus:outline-none focus:border-sky-500" onclick="event.stopPropagation()">
+       
+        <div class="grid grid-cols-2 gap-1.5">
+            <button id="btn-rec" onclick="toggleRecord()" class="py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded font-bold transition flex items-center justify-center gap-1 active:scale-95">
+                <span>●</span> <span id="rec-btn-text">REC FILARE</span>
+            </button>
+            <button onclick="stopRecord()" class="py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded font-bold transition active:scale-95">
+                ■ SALVA TRACCIA
+            </button>
+        </div>
+        <div class="text-[9px] text-slate-400 flex justify-between">
+            <span>Punti salvati: <b id="rec-pts-count" class="text-white">0</b></span>
+            <span>Fix: <b id="rec-fix-stat" class="text-slate-300">NO FIX</b></span>
+        </div>
+    </div>
+
+    <!-- PANNELLO MOTORI MDDS30 & D-PAD (IN BASSO A SINISTRA) -->
+    <div class="absolute bottom-16 left-4 z-30 flex flex-col gap-2 font-mono">
+        <div class="hud-glass p-3 rounded-2xl w-80 shadow-2xl flex flex-col gap-2 border border-sky-500/30">
+            <div class="flex justify-between items-center border-b border-slate-700/80 pb-1.5 text-xs">
+                <span class="font-bold text-sky-400 flex items-center gap-1.5">
+                    <span>⚡</span> <span>POTENZA MOTORI</span>
+                </span>
+                <span id="motor-state-badge" class="px-2 py-0.5 rounded text-[10px] font-black bg-slate-800 text-slate-400 border border-slate-700">STOP</span>
+            </div>
+
+           
+
+            <!-- Motore SX -->
+            <div class="flex flex-col gap-1 text-[11px]">
+                <div class="flex justify-between font-bold">
+                    <span class="text-slate-300">SX (GPIO 23):</span>
+                    <span id="pwr-sx-text" class="text-sky-300">+0% (1500us)</span>
+                </div>
+                <div class="w-full bg-slate-900 h-2 rounded-full overflow-hidden flex">
+                    <div id="bar-sx-rev" class="bg-amber-500 h-full transition-all duration-75" style="width: 0%;"></div>
+                    <div class="w-[2px] bg-slate-700 h-full"></div>
+                    <div id="bar-sx-fwd" class="bg-emerald-400 h-full transition-all duration-75" style="width: 0%;"></div>
+                </div>
+            </div>
+
+            <!-- Motore DX -->
+            <div class="flex flex-col gap-1 text-[11px]">
+                <div class="flex justify-between font-bold">
+                    <span class="text-slate-300">DX (GPIO 19):</span>
+                    <span id="pwr-dx-text" class="text-sky-300">+0% (1500us)</span>
+                </div>
+                <div class="w-full bg-slate-900 h-2 rounded-full overflow-hidden flex">
+                    <div id="bar-dx-rev" class="bg-amber-500 h-full transition-all duration-75" style="width: 0%;"></div>
+                    <div class="w-[2px] bg-slate-700 h-full"></div>
+                    <div id="bar-dx-fwd" class="bg-emerald-400 h-full transition-all duration-75" style="width: 0%;"></div>
+                </div>
+            </div>
+
+            <!-- D-Pad Pulsanti Touch / Click -->
+            <div class="grid grid-cols-3 gap-1.5 pt-1 mt-1 border-t border-slate-800">
+                <button onclick="sendMotorCmd('1')" class="dpad-btn py-1 text-[10px] text-sky-300">1: SX</button>
+                <button onclick="sendMotorCmd('w')" class="dpad-btn py-2 text-xs">▲ W</button>
+                <button onclick="sendMotorCmd('2')" class="dpad-btn py-1 text-[10px] text-sky-300">2: DX</button>
+                <button onclick="sendMotorCmd('a')" class="dpad-btn py-2 text-xs">◄ A</button>
+                <button onclick="triggerStop()" class="dpad-btn py-2 text-xs bg-red-600 hover:bg-red-500 border-red-400 text-white font-black shadow-lg">STOP</button>
+                <button onclick="sendMotorCmd('d')" class="dpad-btn py-2 text-xs">► D</button>
+                <div></div>
+                <button onclick="sendMotorCmd('s')" class="dpad-btn py-2 text-xs">▼ S</button>
+                <div></div>
+            </div>
+            <div class="text-[9px] text-slate-400 text-center">Tasti: <b>W/A/S/D</b> | <b>1/2</b> (singolo) | <b>SPAZIO</b>: STOP</div>
+        </div>
+    </div>
+
+    <!-- REGIA CAMERE SECONDARIE (IN ALTO A DESTRA) -->
+    <div class="absolute top-3 right-3 z-30 flex flex-col gap-2 w-44">
+        <div class="hud-glass p-1.5 rounded-xl text-center text-[10px] font-mono font-bold text-sky-400">
+            <span>📷 REGIA MULTI-CAM</span>
+        </div>
+        <div id="cams-sidebar" class="flex flex-col gap-2"></div>
+    </div>
+
+    <!-- BOX TELEMETRIA GNSS RTK & MINIMAPPA (IN BASSO A DESTRA) -->
+    <div class="absolute bottom-4 right-4 z-30 flex flex-col gap-2">
+        <div class="hud-glass p-2.5 rounded-2xl w-64 md:w-72 font-mono shadow-2xl border border-sky-500/30 flex flex-col gap-1.5 text-[10px]">
+            <div class="flex justify-between items-center border-b border-slate-700/80 pb-1">
+                <span class="font-bold text-sky-400 flex items-center gap-1">
+                    <span>📡</span> <span>GNSS RTK ROVER</span>
+                </span>
+                <span id="gps-rtk-pill" class="px-2 py-0.5 rounded text-[9px] font-black bg-slate-800 text-slate-400 border border-slate-700">NO FIX</span>
+            </div>
+
+            <div class="flex flex-col bg-slate-950/70 p-1.5 rounded-lg border border-slate-800 text-[10px] gap-0.5">
+                <div class="flex justify-between">
+                    <span class="text-slate-400">LAT:</span>
+                    <b id="gps-lat" class="text-slate-200">0.0000000°</b>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-slate-400">LON:</span>
+                    <b id="gps-lon" class="text-slate-200">0.0000000°</b>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-1 text-[9px]">
+                <div class="bg-slate-950/50 p-1 rounded border border-slate-800 flex justify-between">
+                    <span class="text-slate-400">QUOTA:</span>
+                    <b id="gps-alt" class="text-white">-- m</b>
+                </div>
+                <div class="bg-slate-950/50 p-1 rounded border border-slate-800 flex justify-between">
+                    <span class="text-slate-400">SATS:</span>
+                    <b id="gps-sats" class="text-white">--</b>
+                </div>
+                <div class="bg-slate-950/50 p-1 rounded border border-slate-800 flex justify-between">
+                    <span class="text-slate-400">PRECIS.:</span>
+                    <b id="gps-acc" class="text-emerald-400">--</b>
+                </div>
+                <div class="bg-slate-950/50 p-1 rounded border border-slate-800 flex justify-between">
+                    <span class="text-slate-400">VELOCITÀ:</span>
+                    <b id="gps-speed" class="text-sky-300">0.0 km/h</b>
+                </div>
+            </div>
+        </div>
+
+        <!-- MINIMAPPA TATTICA LEAFLET CON FRECCIA DI PRUA -->
+        <div class="hud-glass p-2 rounded-2xl w-64 h-48 md:w-72 md:h-52 flex flex-col overflow-hidden relative shadow-2xl border border-sky-500/20">
+            <div class="flex justify-between items-center px-1 mb-1 text-[10px] font-mono">
+                <span id="map-lock-status" class="text-emerald-400 font-bold">ROVER LOCK</span>
+                <div class="flex items-center gap-1">
+                    <button onclick="minimapZoom(1)" class="w-5 h-5 bg-slate-800 text-white rounded font-bold flex items-center justify-center">+</button>
+                    <button onclick="minimapZoom(-1)" class="w-5 h-5 bg-slate-800 text-white rounded font-bold flex items-center justify-center">-</button>
+                    <button onclick="centerMinimap()" class="px-2 h-5 bg-sky-600 hover:bg-sky-500 text-white rounded font-bold text-[9px] transition">CENTRA</button>
+                </div>
+            </div>
+            <div id="tactical-map" class="w-full flex-1 rounded-xl overflow-hidden bg-slate-950"></div>
+        </div>
+    </div>
+
+    <!-- TASTI RAPIDI DI SICUREZZA IN BASSO -->
+    <div class="absolute bottom-4 left-4 z-30 flex items-center gap-2 font-mono">
+        <button onclick="triggerStop()" class="px-5 py-2 bg-red-600 hover:bg-red-500 active:scale-95 text-white font-black text-xs rounded-xl border border-red-400 transition shadow-2xl flex items-center gap-1.5">
+            <span>🛑</span> <span>E-STOP</span>
+        </button>
+
+        <button id="btn-arm" onclick="toggleDryRun()" class="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] rounded-xl border border-emerald-400 transition flex items-center gap-1 shadow-lg">
+            <span>⚡</span> <span id="arm-btn-text">MOTORI ARMATI</span>
+        </button>
+    </div>
+
+    <!-- SCRIPT CLIENT AUTOPILOTA -->
+    <script>
+        const CAMS = {
+            "usb1": { nome: "EMEET C960 (USB 1)" },
+            "usb2": { nome: "EMEET C960 (USB 2)" },
+            "csi":  { nome: "Presa Diretta CSI" }
+        };
+
+        let currentMainCam = "usb1";
+        let currentFps = 10;
+        let ws = null;
+        let isDryRun = false;
+        let isRecording = false;
+        let activeSpeed = 20;
+
+        let tacticalMap = null;
+        let roverMarker = null;
+        let centerlinePolyline = null;
+        let roverLastCoord = null;
+        let minimapFollow = true;
+        let currentYaw = 0;
+
+        function unfocusInputs(e) {
+            if (e.target.tagName !== 'INPUT') {
+                const active = document.activeElement;
+                if (active && (active.tagName === 'INPUT' || active.tagName === 'BUTTON')) active.blur();
+            }
+        }
+
+        // --- GESTIONE POTENZA MOTORI ---
+        const speedSlider = document.getElementById('motor-speed-slider');
+        const speedDisplay = document.getElementById('speed-val-display');
+
+        function updateSpeedUI(val) {
+            activeSpeed = parseInt(val);
+            if (speedSlider) speedSlider.value = activeSpeed;
+            if (speedDisplay) speedDisplay.innerText = `${activeSpeed}%`;
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'set_speed', speed: activeSpeed }));
+            }
+        }
+
+        if (speedSlider) {
+            speedSlider.addEventListener('input', (e) => updateSpeedUI(e.target.value));
+        }
+
+        function setSpeedPreset(val) {
+            updateSpeedUI(val);
+        }
+
+        // --- AVVIO STREAMING VIDEO ---
+        function initVideoStream() {
+            const fpvVideo = document.getElementById('fpv-video');
+            const placeholder = document.getElementById('video-placeholder');
+            const host = window.location.hostname || '127.0.0.1';
+           
+            fpvVideo.src = `http://${host}:8081/stream`;
+            fpvVideo.classList.remove('hidden');
+            if (placeholder) placeholder.classList.add('hidden');
+        }
+
+        function onStreamError() {
+            const fpvVideo = document.getElementById('fpv-video');
+            const placeholder = document.getElementById('video-placeholder');
+            fpvVideo.classList.add('hidden');
+            if (placeholder) placeholder.classList.remove('hidden');
+            setTimeout(() => {
+                const host = window.location.hostname || '127.0.0.1';
+                fpvVideo.src = `http://${host}:8081/stream?t=${Date.now()}`;
+                fpvVideo.classList.remove('hidden');
+                if (placeholder) placeholder.classList.add('hidden');
+            }, 2500);
+        }
+
+        // --- WEBSOCKET TELEMETRIA & COMANDI ---
+        function connectWebSocket() {
+            const loc = window.location;
+            const wsProtocol = loc.protocol === "https:" ? "wss://" : "ws://";
+            const wsUrl = `${wsProtocol}${loc.host}/ws`;
+
+            const dot = document.getElementById('conn-dot');
+            const statusTxt = document.getElementById('conn-status');
+
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                dot.className = "w-2 h-2 rounded-full bg-emerald-400";
+                statusTxt.innerText = "ONLINE";
+                statusTxt.className = "text-[10px] font-bold text-emerald-400";
+               
+                ws.send(JSON.stringify({ type: "set_dry_run", enabled: isDryRun }));
+                ws.send(JSON.stringify({ type: "set_speed", speed: activeSpeed }));
+                initVideoStream();
+                renderCamsSidebar();
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.type === "telemetry") {
+                        if (data.timestamp) {
+                            document.getElementById('ping-text').innerText = Math.max(1, Date.now() - data.timestamp);
+                        }
+
+                        // Motori MDDS30
+                        if (data.motors) {
+                            const sx = data.motors.left_pct ?? 0;
+                            const dx = data.motors.right_pct ?? 0;
+                            const us_sx = data.motors.left_us ?? 1500;
+                            const us_dx = data.motors.right_us ?? 1500;
+
+                            document.getElementById('pwr-sx-text').innerText = `${sx > 0 ? '+' : ''}${sx}% (${us_sx}us)`;
+                            document.getElementById('pwr-dx-text').innerText = `${dx > 0 ? '+' : ''}${dx}% (${us_dx}us)`;
+
+                            document.getElementById('bar-sx-fwd').style.width = sx > 0 ? `${sx}%` : '0%';
+                            document.getElementById('bar-sx-rev').style.width = sx < 0 ? `${Math.abs(sx)}%` : '0%';
+                            document.getElementById('bar-dx-fwd').style.width = dx > 0 ? `${dx}%` : '0%';
+                            document.getElementById('bar-dx-rev').style.width = dx < 0 ? `${Math.abs(dx)}%` : '0%';
+
+                            const stateBadge = document.getElementById('motor-state-badge');
+                            if (sx === 0 && dx === 0) {
+                                stateBadge.innerText = "STOP";
+                                stateBadge.className = "px-2 py-0.5 rounded text-[10px] font-black bg-slate-800 text-slate-400 border border-slate-700";
+                            } else {
+                                stateBadge.innerText = "RUN";
+                                stateBadge.className = "px-2 py-0.5 rounded text-[10px] font-black bg-emerald-500/20 text-emerald-400 border border-emerald-500 animate-pulse";
+                            }
+                        }
+
+                        // GPS RTK
+                        if (data.gps) {
+                            const status = data.gps.rtk_status || 'NO FIX';
+                            const sats = data.gps.satellites ?? 0;
+                            const lat = data.gps.lat ?? 0;
+                            const lon = data.gps.lon ?? 0;
+                            const alt = data.gps.alt ?? 0;
+                            const speed = data.gps.speed_kmh ?? 0;
+
+                            const rtkPill = document.getElementById('gps-rtk-pill');
+                            rtkPill.innerText = status;
+                            document.getElementById('rec-fix-stat').innerText = status;
+
+                            let accStr = "--";
+                            if (status === 'FIX') {
+                                rtkPill.className = 'px-2 py-0.5 rounded text-[9px] font-black bg-emerald-500/20 text-emerald-400 border border-emerald-500 shadow-sm shadow-emerald-500/50';
+                                accStr = "±2.0 cm";
+                            } else if (status === 'FLOAT') {
+                                rtkPill.className = 'px-2 py-0.5 rounded text-[9px] font-black bg-amber-500/20 text-amber-400 border border-amber-500 shadow-sm shadow-amber-500/50';
+                                accStr = "±35 cm";
+                            } else if (status === 'SINGLE') {
+                                rtkPill.className = 'px-2 py-0.5 rounded text-[9px] font-black bg-sky-500/20 text-sky-400 border border-sky-500';
+                                accStr = "±2.5 m";
+                            } else {
+                                rtkPill.className = 'px-2 py-0.5 rounded text-[9px] font-black bg-slate-800 text-slate-400 border border-slate-700';
+                                accStr = "--";
+                            }
+
+                            document.getElementById('gps-lat').innerText = lat ? `${lat.toFixed(7)}°` : "0.0000000°";
+                            document.getElementById('gps-lon').innerText = lon ? `${lon.toFixed(7)}°` : "0.0000000°";
+                            document.getElementById('gps-alt').innerText = alt ? `${alt.toFixed(1)} m` : "-- m";
+                            document.getElementById('gps-sats').innerText = sats;
+                            document.getElementById('gps-acc').innerText = accStr;
+                            document.getElementById('gps-speed').innerText = `${speed.toFixed(1)} km/h`;
+
+                            if (lat && lat !== 0 && roverMarker) {
+                                roverLastCoord = [lat, lon];
+                                roverMarker.setLatLng(roverLastCoord);
+                                if (minimapFollow) tacticalMap.panTo(roverLastCoord);
+                            }
+                        }
+
+                        // IMU WT61
+                        if (data.imu) {
+                            currentYaw = (data.imu.yaw || 0);
+                            const yawNorm = (currentYaw + 360) % 360;
+                            const pitch = Number(data.imu.pitch || 0);
+                            const roll = Number(data.imu.roll || 0);
+
+                            document.getElementById('heading-deg').innerText = Math.round(yawNorm).toString().padStart(3, '0');
+                            document.getElementById('compass-tape').style.transform = `translateX(${(yawNorm / 360) * -120}px)`;
+
+                            const arrowEl = document.getElementById('rover-arrow');
+                            if (arrowEl) {
+                                arrowEl.style.transform = `rotate(${yawNorm}deg)`;
+                            }
+
+                            document.getElementById('gyro-roll').innerText = `${roll >= 0 ? '+' : ''}${roll.toFixed(1)}°`;
+                            document.getElementById('gyro-pitch').innerText = `${pitch >= 0 ? '+' : ''}${pitch.toFixed(1)}°`;
+
+                            const clampedPitch = Math.max(-20, Math.min(20, pitch));
+                            const pitchPx = clampedPitch * 0.8;
+                            document.getElementById('gyro-horizon').style.transform = `translateY(${pitchPx}px) rotate(${-roll}deg)`;
+
+                            const maxTilt = Math.max(Math.abs(roll), Math.abs(pitch));
+                            const badge = document.getElementById('gyro-status-badge');
+                            if (maxTilt > 20) {
+                                badge.innerText = "⚠ PERICOLO RIBALTAMENTO";
+                                badge.className = "text-[8px] font-black tracking-wider text-rose-500 animate-pulse";
+                            } else if (maxTilt > 10) {
+                                badge.innerText = "▲ ATTENZIONE PENDENZA";
+                                badge.className = "text-[8px] font-black tracking-wider text-amber-400";
+                            } else {
+                                badge.innerText = "● ASSETTO STABILE";
+                                badge.className = "text-[8px] font-black tracking-wider text-emerald-400";
+                            }
+                        }
+
+                        // Recorder Filari
+                        if (data.recorder) {
+                            document.getElementById('rec-pts-count').innerText = data.recorder.points_count;
+                        }
+                    }
+                    else if (data.type === "record_completed") {
+                        document.getElementById('rec-pts-count').innerText = data.points_count;
+                        if (data.centerline) renderCenterline(data.centerline);
+                    }
+                } catch(e) {
+                    console.error("Errore frame:", e);
+                }
+            };
+
+            ws.onclose = () => {
+                dot.className = "w-2 h-2 rounded-full bg-red-500";
+                statusTxt.innerText = "OFFLINE";
+                statusTxt.className = "text-[10px] font-bold text-red-400";
+                setTimeout(connectWebSocket, 1500);
+            };
+        }
+
+        // Heartbeat Watchdog a 1.0s
+        setInterval(() => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: "heartbeat" }));
+            }
+        }, 800);
+
+        // --- COMANDI MOTORI ---
+        function sendMotorCmd(cmd) {
+            if (document.activeElement) document.activeElement.blur();
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: "motor_step", cmd: cmd, speed: activeSpeed }));
+            }
+        }
+
+        function triggerStop() {
+            if (document.activeElement) document.activeElement.blur();
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: "stop" }));
+                ws.send(JSON.stringify({ type: "estop" }));
+            }
+
+            if (isRecording) {
+                isRecording = false;
+                const btn = document.getElementById('btn-rec');
+                if (btn) {
+                    btn.className = "py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded font-bold transition flex items-center justify-center gap-1 active:scale-95";
+                    document.getElementById('rec-btn-text').innerText = "REC FILARE";
+                }
+            }
+
+            document.getElementById('pwr-sx-text').innerText = "+0% (1500us)";
+            document.getElementById('pwr-dx-text').innerText = "+0% (1500us)";
+            document.getElementById('bar-sx-fwd').style.width = '0%';
+            document.getElementById('bar-sx-rev').style.width = '0%';
+            document.getElementById('bar-dx-fwd').style.width = '0%';
+            document.getElementById('bar-dx-rev').style.width = '0%';
+            const stateBadge = document.getElementById('motor-state-badge');
+            stateBadge.innerText = "STOP";
+            stateBadge.className = "px-2 py-0.5 rounded text-[10px] font-black bg-slate-800 text-slate-400 border border-slate-700";
+        }
+
+        window.addEventListener('keydown', (e) => {
+            if (e.repeat) return;
+            const key = e.key.toLowerCase();
+            const active = document.activeElement;
+            if (active && active.tagName === 'INPUT') {
+                if (['w', 'a', 's', 'd', '1', '2', ' '].includes(key)) active.blur();
+                else return;
+            }
+
+            if (key === 'w' || key === 'arrowup') { e.preventDefault(); sendMotorCmd('w'); }
+            else if (key === 's' || key === 'arrowdown') { e.preventDefault(); sendMotorCmd('s'); }
+            else if (key === 'a' || key === 'arrowleft') { e.preventDefault(); sendMotorCmd('a'); }
+            else if (key === 'd' || key === 'arrowright') { e.preventDefault(); sendMotorCmd('d'); }
+            else if (key === '1') { e.preventDefault(); sendMotorCmd('1'); }
+            else if (key === '2') { e.preventDefault(); sendMotorCmd('2'); }
+            else if (key === ' ') { e.preventDefault(); triggerStop(); }
+        });
+
+        function toggleDryRun() {
+            isDryRun = !isDryRun;
+            const btn = document.getElementById('btn-arm');
+            const txt = document.getElementById('arm-btn-text');
+            if (isDryRun) {
+                btn.className = "px-3 py-2 bg-amber-600 hover:bg-amber-500 text-white font-bold text-[10px] rounded-xl border border-amber-400 transition flex items-center gap-1 shadow-lg";
+                txt.innerText = "DRY-RUN (SIMULAZIONE)";
+            } else {
+                btn.className = "px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] rounded-xl border border-emerald-400 transition flex items-center gap-1 shadow-lg";
+                txt.innerText = "MOTORI ARMATI";
+            }
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: "set_dry_run", enabled: isDryRun }));
+            }
+        }
+
+        // --- REGISTRAZIONE FILARI ---
+        function toggleRecord() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+            const btn = document.getElementById('btn-rec');
+            const name = document.getElementById('rec-mission-name').value.trim() || "Filare";
+            if (!isRecording) {
+                isRecording = true;
+                btn.className = "py-1.5 bg-rose-500 text-white rounded font-bold animate-pulse flex items-center justify-center gap-1";
+                document.getElementById('rec-btn-text').innerText = "REC ATTIVO...";
+                ws.send(JSON.stringify({ type: "start_record", mission_name: name }));
+            }
+        }
+
+        function stopRecord() {
+            if (!ws || ws.readyState !== WebSocket.OPEN || !isRecording) return;
+            isRecording = false;
+            const btn = document.getElementById('btn-rec');
+            btn.className = "py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded font-bold transition flex items-center justify-center gap-1 active:scale-95";
+            document.getElementById('rec-btn-text').innerText = "REC FILARE";
+            ws.send(JSON.stringify({ type: "stop_record" }));
+        }
+
+        // --- REGIA MULTI-CAMERA ---
+        function renderCamsSidebar() {
+            const host = window.location.hostname || '127.0.0.1';
+            const sidebar = document.getElementById('cams-sidebar');
+            sidebar.innerHTML = "";
+            document.getElementById('cam-active-name').innerText = CAMS[currentMainCam].nome;
+
+            Object.keys(CAMS).forEach(key => {
+                if (key !== currentMainCam) {
+                    const card = document.createElement('div');
+                    card.className = "hud-glass p-1 rounded-xl cursor-pointer hover:border-sky-400 transition-all shadow-lg flex flex-col gap-1";
+                    card.onclick = () => switchCamera(key);
+                    card.innerHTML = `
+                        <div class="w-full h-20 bg-black rounded-lg overflow-hidden relative">
+                            <img id="thumb-${key}" src="http://${host}:8081/snapshot?cam=${key}" class="w-full h-full object-cover" onerror="this.src=''; this.alt='NO SIGNAL';">
+                            <div class="absolute inset-0 bg-sky-600/30 opacity-0 hover:opacity-100 flex items-center justify-center font-bold text-[9px] text-white">PRIMO PIANO ↗</div>
+                        </div>
+                        <span class="text-[9px] font-bold text-slate-300 px-1 truncate">${CAMS[key].nome}</span>
+                    `;
+                    sidebar.appendChild(card);
+                }
+            });
+        }
+
+        async function switchCamera(camKey) {
+            const host = window.location.hostname || '127.0.0.1';
+            currentMainCam = camKey;
+            await fetch(`http://${host}:8081/api/config?main=${camKey}&fps=${currentFps}`).catch(()=>{});
+            document.getElementById('fpv-video').src = `http://${host}:8081/stream?t=${Date.now()}`;
+            renderCamsSidebar();
+        }
+
+        async function setVideoFps(fps) {
+            const host = window.location.hostname || '127.0.0.1';
+            currentFps = fps;
+            document.querySelectorAll('.fps-badge').forEach(b => {
+                b.classList.toggle('active', parseInt(b.innerText) === fps);
+            });
+            await fetch(`http://${host}:8081/api/config?main=${currentMainCam}&fps=${fps}`).catch(()=>{});
+        }
+
+        setInterval(() => {
+            const host = window.location.hostname || '127.0.0.1';
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+            Object.keys(CAMS).forEach(key => {
+                if (key !== currentMainCam) {
+                    const el = document.getElementById(`thumb-${key}`);
+                    if (el) el.src = `http://${host}:8081/snapshot?cam=${key}&t=${Date.now()}`;
+                }
+            });
+        }, 1500);
+
+        // --- MINIMAPPA TATTICA ---
+        function initTacticalMap() {
+            tacticalMap = L.map('tactical-map', { zoomControl: false, attributionControl: false }).setView([45.9055, 12.4380], 18);
+            L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxNativeZoom: 18, maxZoom: 22 }).addTo(tacticalMap);
+           
+            const arrowIcon = L.divIcon({
+                className: 'custom-rover-pin',
+                html: `
+                    <div id="rover-arrow" class="rover-heading-icon flex items-center justify-center w-7 h-7">
+                        <svg viewBox="0 0 24 24" class="w-6 h-6 filter drop-shadow-[0_0_4px_rgba(56,189,248,0.9)]" fill="#38bdf8">
+                            <path d="M12 2L4.5 20.29l.71.71L12 18l6.79 3 .71-.71z"/>
+                        </svg>
+                    </div>
+                `,
+                iconSize: [28, 28],
+                iconAnchor: [14, 14]
+            });
+
+            roverMarker = L.marker([45.9055, 12.4380], { icon: arrowIcon }).addTo(tacticalMap);
+        }
+
+        function renderCenterline(pts) {
+            if (centerlinePolyline) tacticalMap.removeLayer(centerlinePolyline);
+            centerlinePolyline = L.polyline(pts.map(p => [p.lat, p.lon]), { color: '#facc15', weight: 3, dashArray: '5, 8' }).addTo(tacticalMap);
+            tacticalMap.fitBounds(centerlinePolyline.getBounds(), { padding: [15, 15] });
+        }
+
+        function minimapZoom(d) { if (tacticalMap) tacticalMap.setZoom(tacticalMap.getZoom() + d); }
+        function centerMinimap() {
+            if (tacticalMap && roverLastCoord) tacticalMap.setView(roverLastCoord, 19);
+        }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            initTacticalMap();
+            connectWebSocket();
+        });
+    </script>
+</body>
+</html>
