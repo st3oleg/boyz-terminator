@@ -168,6 +168,7 @@ async def ws_handler(request):
     try:
         async for msg in ws:
             if msg.type == web.WSMsgType.TEXT:
+                received_at_ns = time.perf_counter_ns()
                 try:
                     cmd_data = json.loads(msg.data)
                     msg_type = cmd_data.get("type")
@@ -205,8 +206,25 @@ async def ws_handler(request):
 
                         apply_motor_speeds(pwr_sx, pwr_dx)
 
+                        command_id = cmd_data.get("command_id")
+                        if command_id is not None:
+                            await ws.send_str(json.dumps({
+                                "type": "command_ack",
+                                "command_id": command_id,
+                                "server_process_ms": (time.perf_counter_ns() - received_at_ns) / 1_000_000,
+                                "actuator_active": bool(motors and not is_dry_run)
+                            }))
+
                     elif msg_type in ("stop", "estop"):
                         stop_all_motors()
+                        command_id = cmd_data.get("command_id")
+                        if command_id is not None:
+                            await ws.send_str(json.dumps({
+                                "type": "command_ack",
+                                "command_id": command_id,
+                                "server_process_ms": (time.perf_counter_ns() - received_at_ns) / 1_000_000,
+                                "actuator_active": bool(motors)
+                            }))
 
                     elif msg_type == "start_record":
                         current_mission_name = cmd_data.get("mission_name", "Filare").strip() or "Filare"

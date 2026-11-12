@@ -266,6 +266,13 @@
                 <div></div>
             </div>
             <div class="text-[9px] text-slate-400 text-center">Tasti: <b>W/A/S/D</b> | <b>1/2</b> (singolo) | <b>SPAZIO</b>: STOP</div>
+            <div class="border-t border-slate-800 pt-1 text-center font-mono">
+                <div class="flex justify-between text-[9px]">
+                    <span class="text-slate-400">INPUT → ROVER (STIMA):</span>
+                    <b id="command-latency" class="text-sky-300">IN ATTESA</b>
+                </div>
+                <div id="command-latency-detail" class="text-[8px] text-slate-500" title="La stima dell'andata usa (RTT - elaborazione rover) / 2 e presume una rete simmetrica. Il riscontro conferma la chiamata al driver, non l'inizio del movimento fisico delle ruote.">RTT -- ms · elaborazione rover -- ms</div>
+            </div>
         </div>
     </div>
 
@@ -357,6 +364,9 @@
         let isDryRun = false;
         let isRecording = false;
         let activeSpeed = 20;
+        let commandSequence = 0;
+        let latestCommandId = null;
+        const pendingCommands = new Map();
 
         let tacticalMap = null;
         let roverMarker = null;
@@ -442,7 +452,22 @@
             ws.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
-                    if (data.type === "telemetry") {
+                    if (data.type === "command_ack") {
+                        const pending = pendingCommands.get(data.command_id);
+                        if (!pending) return;
+                        clearTimeout(pending.timeout);
+                        pendingCommands.delete(data.command_id);
+
+                        if (data.command_id === latestCommandId) {
+                            const rttMs = performance.now() - pending.sentAt;
+                            const roverMs = Math.max(0, Number(data.server_process_ms) || 0);
+                            const oneWayEstimateMs = Math.max(0, (rttMs - roverMs) / 2);
+                            document.getElementById('command-latency').innerText = `${oneWayEstimateMs.toFixed(0)} ms`;
+                            document.getElementById('command-latency-detail').innerText =
+                                `andata stimata · RTT ${rttMs.toFixed(0)} ms · rover ${roverMs.toFixed(2)} ms · ${data.actuator_active ? 'driver chiamato' : 'dry-run/no driver'}`;
+                        }
+                    }
+                    else if (data.type === "telemetry") {
                         if (data.timestamp) {
                             document.getElementById('ping-text').innerText = Math.max(1, Date.now() - data.timestamp);
                         }
@@ -583,15 +608,34 @@
         function sendMotorCmd(cmd) {
             if (document.activeElement) document.activeElement.blur();
             if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: "motor_step", cmd: cmd, speed: activeSpeed }));
+                sendTrackedCommand({ type: "motor_step", cmd: cmd, speed: activeSpeed }, cmd.toUpperCase());
             }
+        }
+
+        function sendTrackedCommand(message, label) {
+            const commandId = `${Date.now().toString(36)}-${(++commandSequence).toString(36)}`;
+            const sentAt = performance.now();
+            latestCommandId = commandId;
+            const latencyEl = document.getElementById('command-latency');
+            const detailEl = document.getElementById('command-latency-detail');
+            latencyEl.innerText = 'IN ATTESA';
+            detailEl.innerText = `comando ${label} · attendo il rover`;
+
+            const timeout = setTimeout(() => {
+                pendingCommands.delete(commandId);
+                if (latestCommandId === commandId) {
+                    latencyEl.innerText = 'TIMEOUT';
+                    detailEl.innerText = `nessun riscontro dal rover per ${label}`;
+                }
+            }, 3000);
+            pendingCommands.set(commandId, { sentAt, timeout });
+            ws.send(JSON.stringify({ ...message, command_id: commandId }));
         }
 
         function triggerStop() {
             if (document.activeElement) document.activeElement.blur();
             if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: "stop" }));
-                ws.send(JSON.stringify({ type: "estop" }));
+                sendTrackedCommand({ type: "stop" }, 'STOP');
             }
 
             if (isRecording) {
