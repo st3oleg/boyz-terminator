@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="it" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Personalizzazione Widget - RTK GCS</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script> tailwind.config = { darkMode: 'class', } </script>
+</head>
+<body class="bg-[#0f172a] text-slate-100 min-h-screen flex flex-col font-sans">
+
+    <!-- Navbar -->
+    <nav class="w-full bg-slate-900 border-b border-slate-800 shadow-md px-6 py-4 flex justify-between items-center sticky top-0 z-50">
+        <div class="font-bold text-xl tracking-wide flex items-center gap-3">
+            <span class="text-blue-500 text-2xl">🧩</span> 
+            <span>RTK<span class="text-blue-500 font-black">GCS</span> - Personalizza Widget</span>
+        </div>
+        <a href="index.html" class="text-slate-400 hover:text-white font-medium transition text-sm flex items-center gap-1.5">
+            ◀ Torna alla Mappa Live
+        </a>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="flex-grow max-w-3xl w-full mx-auto p-6 mt-4 flex flex-col gap-6">
+        <div>
+            <h1 class="text-2xl font-black text-white">Configurazione Strumenti HUD</h1>
+            <p class="text-slate-400 text-xs mt-1">Seleziona quali widget telemetrici mostrare in sovrapposizione sulla Mappa Live. Le preferenze vengono salvate in locale sul tuo browser.</p>
+        </div>
+
+        <!-- Sezione Widget Rover Mobile -->
+        <div class="bg-slate-800/60 p-5 rounded-2xl border border-slate-700/80 flex flex-col gap-4">
+            <h2 class="text-sm font-bold uppercase tracking-wider text-sky-400 flex items-center gap-2 border-b border-slate-700 pb-2">
+                <span>🎯</span> <span>Widget Rover Mobile</span>
+            </h2>
+
+            <!-- Widget 1: Stato Fix e Satelliti -->
+            <div class="flex justify-between items-center py-2 border-b border-slate-700/50">
+                <div>
+                    <div class="font-bold text-sm text-white">Stato RTK e Satelliti</div>
+                    <div class="text-xs text-slate-400">Qualità del fix (FIX, FLOAT, SINGLE) e numero satelliti (SIV).</div>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" id="w_rover_status" class="sr-only peer" onchange="savePref('w_rover_status', this.checked)">
+                    <div class="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                </label>
+            </div>
+
+            <!-- Widget 2: Altimetro Quota Z -->
+            <div class="flex justify-between items-center py-2 border-b border-slate-700/50">
+                <div>
+                    <div class="font-bold text-sm text-white">Altimetro (Quota Z)</div>
+                    <div class="text-xs text-slate-400">Altitudine ellissoidica e quota metrica in tempo reale.</div>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" id="w_rover_alt" class="sr-only peer" onchange="savePref('w_rover_alt', this.checked)">
+                    <div class="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                </label>
+            </div>
+
+            <!-- Widget 3: Livella IMU -->
+            <div class="flex justify-between items-center py-2">
+                <div>
+                    <div class="font-bold text-sm text-white">Livella IMU (Bolla Virtuale)</div>
+                    <div class="text-xs text-slate-400">Angoli di beccheggio (Pitch), rollio (Roll) e imbardata (Yaw).</div>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" id="w_rover_imu" class="sr-only peer" onchange="savePref('w_rover_imu', this.checked)">
+                    <div class="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                </label>
+            </div>
+        </div>
+
+        <!-- Sezione Widget Antenna Base -->
+        <div class="bg-slate-800/60 p-5 rounded-2xl border border-slate-700/80 flex flex-col gap-4">
+            <h2 class="text-sm font-bold uppercase tracking-wider text-orange-400 flex items-center gap-2 border-b border-slate-700 pb-2">
+                <span>📡</span> <span>Widget Antenna Base</span>
+            </h2>
+
+            <!-- Widget 1: Heartbeat Latenza -->
+            <div class="flex justify-between items-center py-2 border-b border-slate-700/50">
+                <div>
+                    <div class="font-bold text-sm text-white">Heartbeat Latenza</div>
+                    <div class="text-xs text-slate-400">Tempo trascorso dall'ultimo pacchetto telemetrico ricevuto dalla Base.</div>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" id="w_base_heartbeat" class="sr-only peer" onchange="savePref('w_base_heartbeat', this.checked)">
+                    <div class="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-500"></div>
+                </label>
+            </div>
+
+            <!-- Widget 2: Posizione Assoluta -->
+            <div class="flex justify-between items-center py-2">
+                <div>
+                    <div class="font-bold text-sm text-white">Posizione Assoluta ARP</div>
+                    <div class="text-xs text-slate-400">Coordinate geografiche fisse (Lat, Lon) del punto di riferimento antenna.</div>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" id="w_base_coords" class="sr-only peer" onchange="savePref('w_base_coords', this.checked)">
+                    <div class="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-500"></div>
+                </label>
+            </div>
+        </div>
+
+        <button onclick="resetDefaults()" class="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition">
+            Ripristina Configurazione Predefinita
+        </button>
+
+        <div id="toast" class="fixed bottom-6 left-1/2 transform -translate-x-1/2 bg-blue-600 text-white px-5 py-2.5 rounded-full shadow-2xl opacity-0 transition-opacity duration-300 text-xs font-bold pointer-events-none">
+            Preferenza salvata
+        </div>
+    </main>
+
+    <script>
+        const PREFS = [
+            { id: 'w_rover_status', defaultVal: true },
+            { id: 'w_rover_alt', defaultVal: true },
+            { id: 'w_rover_imu', defaultVal: true },
+            { id: 'w_base_heartbeat', defaultVal: false },
+            { id: 'w_base_coords', defaultVal: false }
+        ];
+
+        function loadAll() {
+            PREFS.forEach(p => {
+                const val = localStorage.getItem(p.id);
+                const el = document.getElementById(p.id);
+                if (el) {
+                    el.checked = val !== null ? val === 'true' : p.defaultVal;
+                }
+            });
+        }
+
+        function savePref(id, checked) {
+            localStorage.setItem(id, checked ? 'true' : 'false');
+            showToast("Preferenza aggiornata per la Mappa Live!");
+        }
+
+        function resetDefaults() {
+            PREFS.forEach(p => {
+                localStorage.setItem(p.id, p.defaultVal ? 'true' : 'false');
+            });
+            loadAll();
+            showToast("Configurazione predefinita ripristinata!");
+        }
+
+        function showToast(msg) {
+            const toast = document.getElementById('toast');
+            toast.innerText = msg;
+            toast.style.opacity = '1';
+            setTimeout(() => { toast.style.opacity = '0'; }, 2000);
+        }
+
+        window.addEventListener('DOMContentLoaded', loadAll);
+    </script>
+</body>
+</html>

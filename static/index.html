@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="it" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Map - RTK GCS</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script> tailwind.config = { darkMode: 'class', } </script>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <style>
+        body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; font-family: 'Inter', sans-serif; }
+        #map { height: 100vh; width: 100vw; position: absolute; top: 0; left: 0; z-index: 1; }
+        .ui-layer { position: absolute; z-index: 1000; }
+        .dark .leaflet-popup-content-wrapper, .dark .leaflet-popup-tip { background-color: #1e293b; color: #f8fafc; border: 1px solid #334155; }
+        
+        /* Livella IMU */
+        .imu-level { width: 44px; height: 44px; border-radius: 50%; border: 2px solid #3b82f6; position: relative; background: radial-gradient(circle, rgba(59,130,246,0.1) 0%, rgba(59,130,246,0.3) 100%); }
+        .imu-bubble { width: 12px; height: 12px; background-color: #3b82f6; border-radius: 50%; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); transition: transform 0.15s ease-out; box-shadow: 0 0 6px rgba(59,130,246,0.8); }
+        .imu-crosshair { position: absolute; top: 0; left: 50%; width: 1px; height: 100%; background: rgba(59,130,246,0.5); transform: translateX(-50%); }
+        .imu-crosshair-h { position: absolute; top: 50%; left: 0; width: 100%; height: 1px; background: rgba(59,130,246,0.5); transform: translateY(-50%); }
+
+        .interactive-widget { transition: box-shadow 0.2s; transform-origin: top right; }
+        .widget-controls { touch-action: none; }
+    </style>
+</head>
+<body class="bg-slate-100 text-slate-900 dark:bg-[#0f172a] dark:text-white transition-colors duration-300 relative">
+
+    <div id="map"></div>
+
+    <!-- NAVBAR SUPERIORE -->
+    <nav class="ui-layer top-0 left-0 w-full bg-white/90 dark:bg-slate-900/80 backdrop-blur-md px-3 md:px-6 py-2 md:py-3.5 flex justify-between items-center border-b border-slate-300 dark:border-slate-700 shadow-lg">
+        <div class="font-bold text-lg md:text-xl tracking-wide flex items-center gap-2 md:gap-3">
+            <span class="text-blue-500 text-xl md:text-2xl">🛰️</span> 
+            <span class="hidden sm:inline">RTK<span class="text-blue-500 font-black">GCS</span></span>
+        </div>
+        
+        <div class="flex gap-2.5 md:gap-4 items-center text-xs md:text-sm">
+            <a href="#" class="text-blue-500 font-semibold border-b-2 border-blue-500 pb-1">Mappa Live</a>
+            <a href="registrazioni.html" class="text-slate-500 hover:text-slate-800 dark:text-slate-400 hover:dark:text-slate-200 font-medium transition">Registrazioni</a>
+            
+            <a href="automatico.html" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3 py-1.5 rounded-xl transition text-xs md:text-sm shadow-md active:scale-95 flex items-center gap-1.5" title="Plancia Multi-Cam & Autopilota">
+                <span>🌱</span> <span>Autopilota</span>
+            </a>
+
+            <!-- SELETTORE DISPOSITIVO ATTIVO -->
+            <div class="relative">
+                <button id="btn-device-selector" class="bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold py-1.5 px-3 rounded-xl flex items-center gap-2 border border-slate-300 dark:border-slate-600 shadow-sm transition">
+                    <span class="text-xs">Vista: <span id="current-device-label" class="text-blue-500 font-black">ROVER</span></span>
+                    <span class="text-[10px] text-slate-400">▼</span>
+                </button>
+                <div id="device-dropdown" class="hidden absolute right-0 mt-2 w-48 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl z-50 overflow-hidden">
+                    <div class="p-1 flex flex-col gap-1">
+                        <button onclick="selectDevice('ROVER')" class="w-full text-left px-3 py-2 text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-blue-50 dark:hover:bg-slate-700 rounded-lg transition flex items-center gap-2">
+                            <span>🎯</span> <span>ROVER (Mobile)</span>
+                        </button>
+                        <button onclick="selectDevice('ANTENNA')" class="w-full text-left px-3 py-2 text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-orange-50 dark:hover:bg-slate-700 rounded-lg transition flex items-center gap-2">
+                            <span>📡</span> <span>ANTENNA (Base RTK)</span>
+                        </button>
+                        <button onclick="selectDevice('GCS')" class="w-full text-left px-3 py-2 text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-green-50 dark:hover:bg-slate-700 rounded-lg transition flex items-center gap-2">
+                            <span>💻</span> <span>GCS (Console PC)</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- MENU IMPOSTAZIONI -->
+            <div class="relative">
+                <button id="btn-settings" class="text-slate-500 hover:text-slate-800 dark:text-slate-400 hover:dark:text-slate-200 font-medium transition flex items-center gap-1 focus:outline-none p-1.5 rounded-lg">
+                    ⚙️
+                </button>
+                <div id="settings-menu" class="hidden absolute right-0 mt-3 w-64 bg-white dark:bg-slate-800 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 p-4 transition-colors z-50">
+                    <a href="scatter_analysis.html" class="flex justify-between items-center w-full mb-3 text-slate-700 dark:text-slate-200 hover:text-blue-500 transition-colors">
+                        <span class="font-medium text-xs md:text-sm">Scatter Analysis 🎯</span>
+                        <span>→</span>
+                    </a>
+                    <a href="impostazioni_widgets.html" class="flex justify-between items-center w-full mb-3 text-slate-700 dark:text-slate-200 hover:text-blue-500 transition-colors">
+                        <span class="font-medium text-xs md:text-sm">Personalizza Widget 🧩</span>
+                        <span>→</span>
+                    </a>
+                    <hr class="border-slate-200 dark:border-slate-700 mb-3">
+                    <div class="flex justify-between items-center">
+                        <span class="font-medium text-xs md:text-sm">Mappa Satellitare</span>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" id="theme-toggle" class="sr-only peer" checked>
+                            <div class="w-9 h-5 bg-slate-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-500"></div>
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- ZONA WIDGET TELEMETRIA (IN ALTO A DESTRA) -->
+    <div class="ui-layer top-16 md:top-20 right-3 md:right-6 flex flex-col gap-3 pointer-events-none z-50">
+        
+        <!-- CONTENITORE WIDGET ROVER -->
+        <div id="rover-widgets-container" class="flex flex-col gap-3 pointer-events-none transition-opacity duration-300">
+            
+            <!-- 1. Stato Fix e Satelliti -->
+            <div id="widget-rover-status" class="interactive-widget relative pointer-events-auto">
+                <div class="widget-controls absolute -top-7 left-1/2 transform -translate-x-1/2 bg-slate-800 text-white rounded-lg flex items-center gap-1.5 px-2 py-0.5 opacity-0 pointer-events-none transition-opacity duration-200 shadow-lg border border-slate-600">
+                    <button class="btn-minus px-1.5 hover:text-blue-400 font-black text-sm">-</button>
+                    <div class="drag-handle cursor-grab hover:text-blue-400 flex items-center justify-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-4 h-4"><path d="M12 2L8 6h3v5H6V8L2 12l4 4v-3h5v5H8l4 4 4-4h-3v-5h5v3l4-4-4-4v3h-5V6h3L12 2z"></path></svg>
+                    </div>
+                    <button class="btn-plus px-1.5 hover:text-blue-400 font-black text-sm">+</button>
+                </div>
+                <div class="click-area bg-white/90 dark:bg-slate-800/90 backdrop-blur-md px-3 py-2 rounded-xl shadow-lg border border-slate-200 dark:border-slate-700 flex items-center justify-between gap-4 cursor-pointer hover:border-blue-500 transition-colors">
+                    <div class="flex items-center gap-2 pointer-events-none">
+                        <span class="text-base md:text-lg">🛰️</span>
+                        <div class="flex flex-col">
+                            <span class="text-[9px] font-bold text-slate-500 tracking-wider uppercase">Satelliti</span>
+                            <span id="siv-display" class="text-sm font-black leading-none text-slate-800 dark:text-white">--</span>
+                        </div>
+                    </div>
+                    <div class="h-6 w-[1px] bg-slate-300 dark:bg-slate-600 pointer-events-none"></div>
+                    <div class="flex items-center gap-2 pointer-events-none">
+                        <div id="rtk-color-dot" class="w-3.5 h-3.5 rounded-full bg-slate-300 dark:bg-slate-600 shadow-inner"></div>
+                        <div class="flex flex-col">
+                            <span class="text-[9px] font-bold text-slate-500 tracking-wider uppercase">Stato RTK</span>
+                            <span id="rtk-status-display" class="text-sm font-black leading-none text-slate-800 dark:text-white">NO FIX</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 2. Livella IMU -->
+            <div id="widget-rover-imu" class="interactive-widget relative pointer-events-auto">
+                <div class="widget-controls absolute -top-7 left-1/2 transform -translate-x-1/2 bg-slate-800 text-white rounded-lg flex items-center gap-1.5 px-2 py-0.5 opacity-0 pointer-events-none transition-opacity duration-200 shadow-lg border border-slate-600">
+                    <button class="btn-minus px-1.5 hover:text-blue-400 font-black text-sm">-</button>
+                    <div class="drag-handle cursor-grab hover:text-blue-400 flex items-center justify-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-4 h-4"><path d="M12 2L8 6h3v5H6V8L2 12l4 4v-3h5v5H8l4 4 4-4h-3v-5h5v3l4-4-4-4v3h-5V6h3L12 2z"></path></svg>
+                    </div>
+                    <button class="btn-plus px-1.5 hover:text-blue-400 font-black text-sm">+</button>
+                </div>
+                <div class="click-area bg-white/90 dark:bg-slate-800/90 backdrop-blur-md px-3 py-2 rounded-xl shadow-lg border border-slate-200 dark:border-slate-700 flex items-center gap-3 cursor-pointer hover:border-blue-500 transition-colors">
+                    <div class="imu-level pointer-events-none">
+                        <div class="imu-crosshair"></div>
+                        <div class="imu-crosshair-h"></div>
+                        <div id="imu-bubble" class="imu-bubble"></div>
+                    </div>
+                    <div class="flex flex-col pointer-events-none">
+                        <span class="text-[9px] font-bold text-slate-500 tracking-wider uppercase">Inclinazione IMU</span>
+                        <span id="imu-text-display" class="text-xs font-mono font-bold text-slate-700 dark:text-slate-300 leading-tight">P: --°<br>R: --°<br>Y: --°</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 3. Altimetro -->
+            <div id="widget-rover-alt" class="interactive-widget relative pointer-events-auto">
+                <div class="widget-controls absolute -top-7 left-1/2 transform -translate-x-1/2 bg-slate-800 text-white rounded-lg flex items-center gap-1.5 px-2 py-0.5 opacity-0 pointer-events-none transition-opacity duration-200 shadow-lg border border-slate-600">
+                    <button class="btn-minus px-1.5 hover:text-blue-400 font-black text-sm">-</button>
+                    <div class="drag-handle cursor-grab hover:text-blue-400 flex items-center justify-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-4 h-4"><path d="M12 2L8 6h3v5H6V8L2 12l4 4v-3h5v5H8l4 4 4-4h-3v-5h5v3l4-4-4-4v3h-5V6h3L12 2z"></path></svg>
+                    </div>
+                    <button class="btn-plus px-1.5 hover:text-blue-400 font-black text-sm">+</button>
+                </div>
+                <div class="click-area bg-white/90 dark:bg-slate-800/90 backdrop-blur-md px-3 py-2 rounded-xl shadow-lg border border-slate-200 dark:border-slate-700 flex items-center gap-3 cursor-pointer hover:border-blue-500 transition-colors">
+                    <span class="text-base md:text-lg text-blue-500 pointer-events-none">⛰️</span>
+                    <div class="flex flex-col pointer-events-none">
+                        <span class="text-[9px] font-bold text-slate-500 tracking-wider uppercase">Altitudine (Z)</span>
+                        <span id="alt-display" class="text-sm font-black text-slate-800 dark:text-white">-- m</span>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- CONTENITORE WIDGET ANTENNA BASE -->
+        <div id="base-widgets-container" class="hidden flex-col gap-3 pointer-events-none transition-opacity duration-300">
+            <!-- Heartbeat Base -->
+            <div id="widget-base-heartbeat" class="interactive-widget relative pointer-events-auto">
+                <div class="click-area bg-white/90 dark:bg-slate-800/90 backdrop-blur-md px-3 py-2 rounded-xl shadow-lg border border-slate-200 dark:border-slate-700 flex items-center gap-3">
+                    <span class="text-base md:text-lg text-orange-500 animate-pulse pointer-events-none">💓</span>
+                    <div class="flex flex-col pointer-events-none">
+                        <span class="text-[9px] font-bold text-slate-500 tracking-wider uppercase">Heartbeat Base</span>
+                        <span id="base-ping-display" class="text-sm font-black text-slate-800 dark:text-white">-- sec</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Coordinate Base -->
+            <div id="widget-base-coords" class="interactive-widget relative pointer-events-auto">
+                <div class="click-area bg-white/90 dark:bg-slate-800/90 backdrop-blur-md px-3 py-2 rounded-xl shadow-lg border border-slate-200 dark:border-slate-700 flex items-center gap-3">
+                    <span class="text-base md:text-lg text-orange-500 pointer-events-none">📍</span>
+                    <div class="flex flex-col pointer-events-none">
+                        <span class="text-[9px] font-bold text-slate-500 tracking-wider uppercase">Posizione Base RTK</span>
+                        <span id="base-coords-display" class="text-[10px] font-mono font-bold text-slate-700 dark:text-slate-300 leading-tight">In attesa segnale...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- CONTENITORE INFO GCS -->
+        <div id="gcs-widgets-container" class="hidden flex-col gap-3 pointer-events-none transition-opacity duration-300">
+            <div id="widget-gcs-status" class="interactive-widget relative pointer-events-auto">
+                <div class="bg-white/90 dark:bg-slate-800/90 backdrop-blur-md px-3 py-2 rounded-xl shadow-lg border border-slate-200 dark:border-slate-700 flex items-center gap-3">
+                    <span class="text-base md:text-lg text-green-500">💻</span>
+                    <div class="flex flex-col">
+                        <span class="text-[9px] font-bold text-slate-500 tracking-wider uppercase">Console GCS</span>
+                        <span id="gcs-coords-display" class="text-[10px] font-mono font-bold text-slate-700 dark:text-slate-300">GPS browser attivo</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // --- GESTIONE PREFERENZE WIDGET (LOCALSTORAGE) ---
+        function toggleWidget(id, show) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            if (show) {
+                el.classList.remove('hidden');
+            } else {
+                el.classList.add('hidden');
+            }
+        }
+
+        function loadWidgetPreferences() {
+            // Se non è stato impostato esplicitamente a 'false', i widget rover sono true di default
+            const showRovStatus = localStorage.getItem('w_rover_status') !== 'false';
+            const showRovAlt = localStorage.getItem('w_rover_alt') !== 'false';
+            const showRovImu = localStorage.getItem('w_rover_imu') !== 'false';
+
+            toggleWidget('widget-rover-status', showRovStatus);
+            toggleWidget('widget-rover-alt', showRovAlt);
+            toggleWidget('widget-rover-imu', showRovImu);
+
+            // Widget Antenna Base (disattivati di default se null)
+            const showBaseHb = localStorage.getItem('w_base_heartbeat') === 'true';
+            const showBaseCoords = localStorage.getItem('w_base_coords') === 'true';
+
+            toggleWidget('widget-base-heartbeat', showBaseHb);
+            toggleWidget('widget-base-coords', showBaseCoords);
+        }
+
+        // Esegui all'avvio e quando la finestra riprende il focus
+        loadWidgetPreferences();
+        window.addEventListener('focus', loadWidgetPreferences);
+        window.addEventListener('storage', loadWidgetPreferences);
+
+        // --- GESTIONE TRASCINAMENTO E RIDIMENSIONAMENTO WIDGET ---
+        document.querySelectorAll('.interactive-widget').forEach(widget => {
+            let x = 0, y = 0, scale = 1;
+            const controls = widget.querySelector('.widget-controls');
+            const dragHandle = widget.querySelector('.drag-handle');
+            const btnPlus = widget.querySelector('.btn-plus');
+            const btnMinus = widget.querySelector('.btn-minus');
+            const clickArea = widget.querySelector('.click-area');
+
+            if (clickArea && controls) {
+                clickArea.addEventListener('click', (e) => {
+                    document.querySelectorAll('.widget-controls').forEach(c => {
+                        c.classList.remove('opacity-100', 'pointer-events-auto');
+                        c.classList.add('opacity-0', 'pointer-events-none');
+                    });
+                    controls.classList.remove('opacity-0', 'pointer-events-none');
+                    controls.classList.add('opacity-100', 'pointer-events-auto');
+                    e.stopPropagation();
+                });
+            }
+
+            function updateTransform() {
+                widget.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+            }
+
+            if (btnPlus && btnMinus) {
+                btnPlus.addEventListener('click', (e) => { scale = Math.min(scale + 0.1, 2.0); updateTransform(); e.stopPropagation(); });
+                btnMinus.addEventListener('click', (e) => { scale = Math.max(scale - 0.1, 0.5); updateTransform(); e.stopPropagation(); });
+            }
+
+            let isDragging = false, startX, startY, initialX, initialY;
+            if (dragHandle) {
+                function dragStart(e) {
+                    isDragging = true;
+                    dragHandle.style.cursor = 'grabbing';
+                    const evt = e.type.includes('touch') ? e.touches[0] : e;
+                    startX = evt.clientX;
+                    startY = evt.clientY;
+                    initialX = x;
+                    initialY = y;
+                    e.preventDefault();
+                }
+                dragHandle.addEventListener('mousedown', dragStart);
+                dragHandle.addEventListener('touchstart', dragStart, {passive: false});
+
+                function drag(e) {
+                    if (!isDragging) return;
+                    const evt = e.type.includes('touch') ? e.touches[0] : e;
+                    x = initialX + (evt.clientX - startX);
+                    y = initialY + (evt.clientY - startY);
+                    updateTransform();
+                    e.preventDefault();
+                }
+                document.addEventListener('mousemove', drag);
+                document.addEventListener('touchmove', drag, {passive: false});
+
+                function dragEnd() {
+                    if (isDragging) {
+                        isDragging = false;
+                        dragHandle.style.cursor = 'grab';
+                    }
+                }
+                document.addEventListener('mouseup', dragEnd);
+                document.addEventListener('touchend', dragEnd);
+            }
+        });
+
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.interactive-widget')) {
+                document.querySelectorAll('.widget-controls').forEach(c => {
+                    c.classList.remove('opacity-100', 'pointer-events-auto');
+                    c.classList.add('opacity-0', 'pointer-events-none');
+                });
+            }
+        });
+
+        // --- SELETTORE DISPOSITIVO ---
+        const btnDeviceSelector = document.getElementById('btn-device-selector');
+        const deviceDropdown = document.getElementById('device-dropdown');
+        const currentDeviceLabel = document.getElementById('current-device-label');
+        
+        btnDeviceSelector.addEventListener('click', (e) => { e.stopPropagation(); deviceDropdown.classList.toggle('hidden'); });
+        document.addEventListener('click', (e) => { if (!deviceDropdown.contains(e.target) && e.target !== btnDeviceSelector) deviceDropdown.classList.add('hidden'); });
+
+        function selectDevice(device) {
+            currentDeviceLabel.innerText = device;
+            deviceDropdown.classList.add('hidden');
+            
+            const contRover = document.getElementById('rover-widgets-container');
+            const contBase = document.getElementById('base-widgets-container');
+            const contGcs = document.getElementById('gcs-widgets-container');
+
+            if (device === 'ROVER') {
+                currentDeviceLabel.className = "text-blue-500 font-black";
+                contRover.style.display = 'flex';
+                contBase.style.display = 'none';
+                contGcs.style.display = 'none';
+                if (isRoverVisible) map.panTo(roverMarker.getLatLng());
+            } else if (device === 'ANTENNA') {
+                currentDeviceLabel.className = "text-orange-500 font-black";
+                contRover.style.display = 'none';
+                contBase.style.display = 'flex';
+                contGcs.style.display = 'none';
+                if (isBaseVisible) map.panTo(baseMarker.getLatLng());
+            } else if (device === 'GCS') {
+                currentDeviceLabel.className = "text-green-500 font-black";
+                contRover.style.display = 'none';
+                contBase.style.display = 'none';
+                contGcs.style.display = 'flex';
+                if (gcsMarker) map.panTo(gcsMarker.getLatLng());
+            }
+        }
+
+        // --- MAPPA LEAFLET & LIVELLI ---
+        const btnSettings = document.getElementById('btn-settings');
+        const settingsMenu = document.getElementById('settings-menu');
+        const themeToggle = document.getElementById('theme-toggle');
+        const htmlElement = document.documentElement;
+
+        btnSettings.addEventListener('click', (e) => { e.stopPropagation(); settingsMenu.classList.toggle('hidden'); });
+        document.addEventListener('click', (e) => { if (!settingsMenu.contains(e.target) && e.target !== btnSettings) settingsMenu.classList.add('hidden'); });
+
+        const map = L.map('map', { zoomControl: false, maxZoom: 22 }).setView([45.9055, 12.4380], 15);
+        
+        const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+            maxNativeZoom: 18,
+            maxZoom: 22,
+            attribution: 'Tiles &copy; Esri'
+        }).addTo(map);
+
+        const darkLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+            maxNativeZoom: 16,
+            maxZoom: 22,
+            attribution: 'Tiles &copy; Esri'
+        });
+
+        L.control.zoom({ position: 'bottomleft' }).addTo(map);
+
+        themeToggle.addEventListener('change', (e) => {
+            if (e.target.checked) { 
+                htmlElement.classList.add('dark'); 
+                map.removeLayer(darkLayer); 
+                satelliteLayer.addTo(map); 
+            } else { 
+                htmlElement.classList.add('dark'); 
+                map.removeLayer(satelliteLayer); 
+                darkLayer.addTo(map); 
+            }
+        });
+
+        // Marker GCS
+        let gcsMarker = null;
+        map.locate({setView: false, maxZoom: 16});
+        map.on('locationfound', function(e) { 
+            if (gcsMarker) map.removeLayer(gcsMarker);
+            gcsMarker = L.circleMarker(e.latlng, { radius: 8, fillColor: "#22c55e", color: "#fff", weight: 2, fillOpacity: 0.9 }).addTo(map);
+            gcsMarker.bindPopup("<b>Console GCS</b>");
+            document.getElementById('gcs-coords-display').innerText = `Lat: ${e.latlng.lat.toFixed(6)}, Lon: ${e.latlng.lng.toFixed(6)}`;
+        });
+
+        // Marker Rover & Base
+        let isRoverVisible = false; 
+        let isBaseVisible = false;
+        let mapCenteredOnce = false;
+
+        const roverMarker = L.circleMarker([0, 0], { radius: 9, fillColor: "#3b82f6", color: "#fff", weight: 2.5, fillOpacity: 0.95 });
+        roverMarker.bindPopup("<b>Rover Terminator</b>");
+
+        const baseMarker = L.circleMarker([0, 0], { radius: 9, fillColor: "#f97316", color: "#fff", weight: 2.5, fillOpacity: 0.95 });
+        baseMarker.bindPopup("<b>Antenna Base RTK</b>");
+
+        // --- WEBSOCKET TELEMETRIA ---
+        function connectWebSocket() {
+            const loc = window.location;
+            const wsProtocol = loc.protocol === "https:" ? "wss://" : "ws://";
+            const wsUrl = `${wsProtocol}${loc.host}/ws`;
+
+            const ws = new WebSocket(wsUrl);
+
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    
+                    if (data.rover) {
+                        const r = data.rover;
+                        if (r.lat && r.lon && r.lat !== 0) {
+                            roverMarker.setLatLng([r.lat, r.lon]);
+                            if (!isRoverVisible) {
+                                roverMarker.addTo(map);
+                                isRoverVisible = true;
+                            }
+                            if (!mapCenteredOnce) {
+                                map.setView([r.lat, r.lon], 18);
+                                mapCenteredOnce = true;
+                            }
+                        }
+
+                        document.getElementById('siv-display').innerText = (r.satellites !== undefined) ? r.satellites : '--';
+                        document.getElementById('rtk-status-display').innerText = r.rtk_status || 'NO FIX';
+
+                        const colorDot = document.getElementById('rtk-color-dot');
+                        if (r.rtk_status === 'FIX') colorDot.className = 'w-3.5 h-3.5 rounded-full bg-green-500 shadow-[0_0_12px_rgba(34,197,94,0.9)]';
+                        else if (r.rtk_status === 'FLOAT') colorDot.className = 'w-3.5 h-3.5 rounded-full bg-yellow-400 shadow-[0_0_12px_rgba(250,204,21,0.9)]';
+                        else if (r.rtk_status === 'SINGLE') colorDot.className = 'w-3.5 h-3.5 rounded-full bg-blue-500 shadow-[0_0_12px_rgba(59,130,246,0.9)]';
+                        else colorDot.className = 'w-3.5 h-3.5 rounded-full bg-slate-400 dark:bg-slate-600 shadow-inner';
+
+                        document.getElementById('alt-display').innerText = `${Number(r.alt || 0).toFixed(2)} m`;
+
+                        const pitch = Number(r.pitch || 0);
+                        const roll = Number(r.roll || 0);
+                        const yaw = Number(r.yaw || 0);
+                        document.getElementById('imu-text-display').innerHTML = `P: ${pitch.toFixed(1)}°<br>R: ${roll.toFixed(1)}°<br>Y: ${yaw.toFixed(1)}°`;
+
+                        const maxMovement = 14; 
+                        let moveX = (roll / 90) * maxMovement; 
+                        let moveY = (pitch / 90) * maxMovement; 
+                        const dist = Math.sqrt(moveX*moveX + moveY*moveY);
+                        if (dist > maxMovement) {
+                            moveX = (moveX / dist) * maxMovement;
+                            moveY = (moveY / dist) * maxMovement;
+                        }
+                        document.getElementById('imu-bubble').style.transform = `translate(calc(-50% + ${moveX}px), calc(-50% + ${moveY}px))`;
+                    }
+
+                    if (data.base && data.base.lat && data.base.lat !== 0) {
+                        baseMarker.setLatLng([data.base.lat, data.base.lon]);
+                        if (!isBaseVisible) {
+                            baseMarker.addTo(map);
+                            isBaseVisible = true;
+                        }
+                        document.getElementById('base-coords-display').innerHTML = `Lat: ${data.base.lat.toFixed(6)}<br>Lon: ${data.base.lon.toFixed(6)}`;
+                    }
+
+                } catch(e) {
+                    console.error("Errore frame:", e);
+                }
+            };
+
+            ws.onclose = () => setTimeout(connectWebSocket, 1500);
+        }
+
+        selectDevice('ROVER');
+        connectWebSocket();
+    </script>
+</body>
+</html>
