@@ -178,8 +178,6 @@
                 <span id="conn-status" class="text-[10px] font-bold text-yellow-400">AVVIO...</span>
             </div>
             <div class="h-4 w-[1px] bg-slate-700"></div>
-            <div class="text-[10px]">PING: <b id="ping-text" class="text-emerald-400">--</b>ms</div>
-            <div class="h-4 w-[1px] bg-slate-700"></div>
             <div class="flex items-center gap-1">
                 <span class="text-[9px] text-slate-400">FPS:</span>
                 <span class="fps-badge text-[10px]" onclick="setVideoFps(2)">2</span>
@@ -222,7 +220,10 @@
                 <span class="font-bold text-sky-400 flex items-center gap-1.5">
                     <span>⚡</span> <span>POTENZA MOTORI</span>
                 </span>
-                <span id="motor-state-badge" class="px-2 py-0.5 rounded text-[10px] font-black bg-slate-800 text-slate-400 border border-slate-700">STOP</span>
+                <span class="flex items-center gap-2">
+                    <span class="text-[10px] text-slate-400">PING: <b id="ping-text" class="text-emerald-400">--</b>ms</span>
+                    <span id="motor-state-badge" class="px-2 py-0.5 rounded text-[10px] font-black bg-slate-800 text-slate-400 border border-slate-700">STOP</span>
+                </span>
             </div>
 
            
