@@ -71,6 +71,7 @@ WATCHDOG_TIMEOUT = 1.0  # Arresto se nessun segnale per oltre 1.0 secondo
 
 # Stato Registrazione Filari GPS
 is_recording = False
+has_unsaved_record = False
 current_mission_name = "Filare_1"
 recorded_points = []
 last_recorded_lat = None
@@ -262,7 +263,8 @@ async def handle_runtime_config(request):
 # --- GESTIONE COMANDI WEBSOCKET ---
 
 async def ws_handler(request):
-    global last_heartbeat, is_dry_run, is_recording, current_mission_name, recorded_points
+    global last_heartbeat, is_dry_run, is_recording, has_unsaved_record
+    global current_mission_name, recorded_points, last_recorded_lat, last_recorded_lon
     global pwr_sx, pwr_dx
 
     ws = web.WebSocketResponse()
@@ -273,6 +275,7 @@ async def ws_handler(request):
         async for msg in ws:
             if msg.type == web.WSMsgType.TEXT:
                 received_at_ns = time.perf_counter_ns()
+                msg_type = "unknown"
                 try:
                     cmd_data = json.loads(msg.data)
                     msg_type = cmd_data.get("type")
@@ -341,13 +344,25 @@ async def ws_handler(request):
                     elif msg_type == "start_record":
                         current_mission_name = cmd_data.get("mission_name", "Filare").strip() or "Filare"
                         recorded_points = []
+                        last_recorded_lat = None
+                        last_recorded_lon = None
                         is_recording = True
+                        has_unsaved_record = True
+                        print(f"[REC] Avvio '{current_mission_name}'")
 
                     elif msg_type == "stop_record":
                         is_recording = False
+                        if not has_unsaved_record:
+                            await ws.send_str(json.dumps({
+                                "type": "record_save_error",
+                                "message": "Non ci sono punti in attesa di salvataggio.",
+                            }))
+                            continue
+
                         filename = f"{current_mission_name}_{int(time.time())}.json"
                         out_path = os.path.join(MISSIONS_DIR, filename)
                         try:
+                            os.makedirs(MISSIONS_DIR, exist_ok=True)
                             with open(out_path, "w", encoding="utf-8") as f:
                                 json.dump({
                                     "mission": current_mission_name,
@@ -356,11 +371,15 @@ async def ws_handler(request):
                                     "points": recorded_points
                                 }, f, indent=2)
                         except Exception as exc:
+                            print(f"[REC] Errore salvataggio '{out_path}': {exc}")
                             await ws.send_str(json.dumps({
                                 "type": "record_save_error",
                                 "message": str(exc),
                             }))
                             continue
+
+                        has_unsaved_record = False
+                        print(f"[REC] Salvata '{out_path}' punti={len(recorded_points)}")
 
                         resp = json.dumps({
                             "type": "record_completed",
@@ -371,10 +390,13 @@ async def ws_handler(request):
                             "centerline": recorded_points
                         })
                         for c in list(ws_clients):
-                            await c.send_str(resp)
+                            try:
+                                await c.send_str(resp)
+                            except Exception:
+                                ws_clients.discard(c)
 
-                except Exception:
-                    pass
+                except Exception as exc:
+                    print(f"[WS] Errore comando {msg_type!r}: {exc}")
     finally:
         ws_clients.discard(ws)
     return ws
@@ -457,6 +479,7 @@ async def telemetry_broadcaster():
             },
             "recorder": {
                 "is_recording": is_recording,
+                "can_save": has_unsaved_record,
                 "points_count": len(recorded_points)
             },
 

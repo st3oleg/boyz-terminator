@@ -392,6 +392,7 @@
         let ws = null;
         let isDryRun = false;
         let isRecording = false;
+        let canSaveRecord = false;
         let activeSpeed = 20;
         let commandSequence = 0;
         let latestCommandId = null;
@@ -610,10 +611,15 @@
                         // Recorder Filari
                         if (data.recorder) {
                             document.getElementById('rec-pts-count').innerText = data.recorder.points_count;
+                            isRecording = Boolean(data.recorder.is_recording);
+                            canSaveRecord = Boolean(data.recorder.can_save);
+                            updateRecordingButtons();
                         }
                     }
                     else if (data.type === "record_completed") {
                         document.getElementById('rec-pts-count').innerText = data.points_count;
+                        isRecording = false;
+                        canSaveRecord = false;
                         if (data.centerline && data.centerline.length >= 2) renderCenterline(data.centerline);
                         const hasUsableTrace = Number(data.points_count) >= 2;
                         showRecordSaveNotice(
@@ -625,6 +631,7 @@
                         resetSaveButton();
                     }
                     else if (data.type === "record_save_error") {
+                        canSaveRecord = true;
                         showRecordSaveNotice('error', 'Salvataggio non riuscito', data.message || 'Errore di scrittura sul Rover.', '');
                         resetSaveButton();
                     }
@@ -763,9 +770,24 @@
 
         function resetSaveButton() {
             const button = document.getElementById('btn-save-recording');
-            button.disabled = false;
             button.innerText = '■ SALVA TRACCIA';
             button.classList.remove('opacity-50', 'cursor-wait');
+            updateRecordingButtons();
+        }
+
+        function updateRecordingButtons() {
+            const recordButton = document.getElementById('btn-rec');
+            const saveButton = document.getElementById('btn-save-recording');
+            if (isRecording) {
+                recordButton.className = "py-1.5 bg-rose-500 text-white rounded font-bold animate-pulse flex items-center justify-center gap-1";
+                document.getElementById('rec-btn-text').innerText = "REC ATTIVO...";
+            } else {
+                recordButton.className = "py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded font-bold transition flex items-center justify-center gap-1 active:scale-95";
+                document.getElementById('rec-btn-text').innerText = "REC FILARE";
+            }
+            saveButton.disabled = !isRecording && !canSaveRecord;
+            saveButton.classList.toggle('opacity-50', saveButton.disabled);
+            saveButton.classList.toggle('cursor-wait', saveButton.disabled);
         }
 
         function toggleRecord() {
@@ -774,15 +796,22 @@
             const name = document.getElementById('rec-mission-name').value.trim() || "Filare";
             if (!isRecording) {
                 isRecording = true;
+                canSaveRecord = true;
                 btn.className = "py-1.5 bg-rose-500 text-white rounded font-bold animate-pulse flex items-center justify-center gap-1";
                 document.getElementById('rec-btn-text').innerText = "REC ATTIVO...";
+                updateRecordingButtons();
                 ws.send(JSON.stringify({ type: "start_record", mission_name: name }));
             }
         }
 
         function stopRecord() {
-            if (!ws || ws.readyState !== WebSocket.OPEN || !isRecording) return;
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                showRecordSaveNotice('error', 'Rover non connesso', 'Salvataggio non inviato.', '');
+                return;
+            }
+            if (!isRecording && !canSaveRecord) return;
             isRecording = false;
+            canSaveRecord = false;
             const btn = document.getElementById('btn-rec');
             btn.className = "py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded font-bold transition flex items-center justify-center gap-1 active:scale-95";
             document.getElementById('rec-btn-text').innerText = "REC FILARE";
