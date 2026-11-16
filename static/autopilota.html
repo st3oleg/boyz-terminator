@@ -203,13 +203,24 @@
             <button id="btn-rec" onclick="toggleRecord()" class="py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded font-bold transition flex items-center justify-center gap-1 active:scale-95">
                 <span>●</span> <span id="rec-btn-text">REC FILARE</span>
             </button>
-            <button onclick="stopRecord()" class="py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded font-bold transition active:scale-95">
+            <button id="btn-save-recording" onclick="stopRecord()" class="py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded font-bold transition active:scale-95">
                 ■ SALVA TRACCIA
             </button>
         </div>
         <div class="text-[9px] text-slate-400 flex justify-between">
             <span>Punti salvati: <b id="rec-pts-count" class="text-white">0</b></span>
             <span>Fix: <b id="rec-fix-stat" class="text-slate-300">NO FIX</b></span>
+        </div>
+    </div>
+
+    <div id="record-save-toast" role="status" aria-live="polite" class="hidden fixed z-50 bottom-5 left-1/2 -translate-x-1/2 w-[min(92vw,34rem)] hud-glass border border-emerald-500/50 rounded-xl p-3 shadow-2xl font-mono">
+        <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0">
+                <div id="record-save-title" class="font-bold text-emerald-300 text-xs"></div>
+                <div id="record-save-detail" class="text-slate-200 text-[10px] mt-1"></div>
+                <code id="record-save-path" class="block text-sky-300 text-[9px] mt-1 break-all"></code>
+            </div>
+            <button type="button" onclick="hideRecordSaveNotice()" aria-label="Chiudi conferma" class="text-slate-400 hover:text-white px-1">✕</button>
         </div>
     </div>
 
@@ -281,6 +292,19 @@
     <div class="absolute top-3 right-3 z-30 flex flex-col gap-2 w-44">
         <div class="hud-glass p-1.5 rounded-xl text-center text-[10px] font-mono font-bold text-sky-400">
             <span>📷 REGIA MULTI-CAM</span>
+        </div>
+        <div class="hud-glass p-2 rounded-xl font-mono text-[9px]">
+            <div class="flex justify-between items-center text-slate-300">
+                <label for="camera-preset-slider" class="font-bold">IMMAGINE</label>
+                <span id="camera-preset-label" class="text-amber-300">Bilanciato</span>
+            </div>
+            <input id="camera-preset-slider" type="range" min="0" max="2" step="1" value="1"
+                class="w-full h-1.5 mt-2 accent-sky-500 cursor-pointer"
+                aria-label="Preset immagine videocamere">
+            <div class="flex justify-between text-[8px] text-slate-400 mt-1">
+                <span>NOTTURNO</span><span>BILANCIATO</span><span>DIURNO</span>
+            </div>
+            <div id="camera-preset-status" class="text-slate-500 text-[8px] mt-1 text-right">Entrambe le webcam</div>
         </div>
         <div id="cams-sidebar" class="flex flex-col gap-2"></div>
     </div>
@@ -357,9 +381,13 @@
             "usb1": { nome: "EMEET C960 (USB 1)", port: 8081 },
             "usb2": { nome: "EMEET C960 (USB 2)", port: 8082 }
         };
+        const CAMERA_PRESET_KEYS = ["night", "balanced", "daylight"];
+        const CAMERA_PRESET_LABELS = ["Notturno", "Bilanciato", "Diurno"];
         const CAMERA_HOST = new URLSearchParams(window.location.search).get('cameraHost') || '100.73.187.83';
 
         let currentMainCam = "usb1";
+        let currentCameraPreset = localStorage.getItem('terminator-camera-preset') || 'balanced';
+        if (!CAMERA_PRESET_KEYS.includes(currentCameraPreset)) currentCameraPreset = 'balanced';
         let currentFps = 10;
         let ws = null;
         let isDryRun = false;
@@ -443,6 +471,7 @@
                
                 ws.send(JSON.stringify({ type: "set_dry_run", enabled: isDryRun }));
                 ws.send(JSON.stringify({ type: "set_speed", speed: activeSpeed }));
+                sendCameraImagePreset();
                 initVideoStream();
                 renderCamsSidebar();
             };
@@ -450,7 +479,12 @@
             ws.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
-                    if (data.type === "command_ack") {
+                    if (data.type === "camera_image_preset_result") {
+                        const status = document.getElementById('camera-preset-status');
+                        status.innerText = data.detail || (data.ok ? 'Preset applicato' : 'Preset non applicato');
+                        status.className = `text-[8px] mt-1 text-right ${data.ok ? 'text-emerald-400' : 'text-rose-400'}`;
+                    }
+                    else if (data.type === "command_ack") {
                         const pending = pendingCommands.get(data.command_id);
                         if (!pending) return;
                         clearTimeout(pending.timeout);
@@ -580,7 +614,19 @@
                     }
                     else if (data.type === "record_completed") {
                         document.getElementById('rec-pts-count').innerText = data.points_count;
-                        if (data.centerline) renderCenterline(data.centerline);
+                        if (data.centerline && data.centerline.length >= 2) renderCenterline(data.centerline);
+                        const hasUsableTrace = Number(data.points_count) >= 2;
+                        showRecordSaveNotice(
+                            hasUsableTrace ? 'success' : 'warning',
+                            hasUsableTrace ? 'Traccia salvata con successo' : 'File salvato, traccia troppo corta',
+                            `${data.points_count} punti registrati`,
+                            data.file_path || data.filename || 'Percorso del file non ricevuto dal server.'
+                        );
+                        resetSaveButton();
+                    }
+                    else if (data.type === "record_save_error") {
+                        showRecordSaveNotice('error', 'Salvataggio non riuscito', data.message || 'Errore di scrittura sul Rover.', '');
+                        resetSaveButton();
                     }
                 } catch(e) {
                     console.error("Errore frame:", e);
@@ -691,6 +737,37 @@
         }
 
         // --- REGISTRAZIONE FILARI ---
+        let recordNoticeTimeout = null;
+
+        function showRecordSaveNotice(state, title, detail, path) {
+            const toast = document.getElementById('record-save-toast');
+            const styles = {
+                success: { border: 'border-emerald-500/50', title: 'text-emerald-300' },
+                warning: { border: 'border-amber-500/50', title: 'text-amber-300' },
+                error: { border: 'border-rose-500/50', title: 'text-rose-300' }
+            };
+            const style = styles[state] || styles.error;
+            toast.className = `fixed z-50 bottom-5 left-1/2 -translate-x-1/2 w-[min(92vw,34rem)] hud-glass ${style.border} rounded-xl p-3 shadow-2xl font-mono`;
+            document.getElementById('record-save-title').innerText = title;
+            document.getElementById('record-save-title').className = `font-bold ${style.title} text-xs`;
+            document.getElementById('record-save-detail').innerText = detail;
+            document.getElementById('record-save-path').innerText = path;
+            document.getElementById('record-save-path').classList.toggle('hidden', !path);
+            window.clearTimeout(recordNoticeTimeout);
+            recordNoticeTimeout = window.setTimeout(hideRecordSaveNotice, 15000);
+        }
+
+        function hideRecordSaveNotice() {
+            document.getElementById('record-save-toast').classList.add('hidden');
+        }
+
+        function resetSaveButton() {
+            const button = document.getElementById('btn-save-recording');
+            button.disabled = false;
+            button.innerText = '■ SALVA TRACCIA';
+            button.classList.remove('opacity-50', 'cursor-wait');
+        }
+
         function toggleRecord() {
             if (!ws || ws.readyState !== WebSocket.OPEN) return;
             const btn = document.getElementById('btn-rec');
@@ -709,10 +786,43 @@
             const btn = document.getElementById('btn-rec');
             btn.className = "py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded font-bold transition flex items-center justify-center gap-1 active:scale-95";
             document.getElementById('rec-btn-text').innerText = "REC FILARE";
+            const saveButton = document.getElementById('btn-save-recording');
+            saveButton.disabled = true;
+            saveButton.innerText = 'SALVATAGGIO…';
+            saveButton.classList.add('opacity-50', 'cursor-wait');
             ws.send(JSON.stringify({ type: "stop_record" }));
         }
 
         // --- REGIA MULTI-CAMERA ---
+        function sendCameraImagePreset() {
+            const presetIndex = CAMERA_PRESET_KEYS.indexOf(currentCameraPreset);
+            const slider = document.getElementById('camera-preset-slider');
+            const label = document.getElementById('camera-preset-label');
+            if (slider) slider.value = String(presetIndex);
+            if (label) label.innerText = CAMERA_PRESET_LABELS[presetIndex];
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                document.getElementById('camera-preset-status').innerText = 'Applico a entrambe…';
+                document.getElementById('camera-preset-status').className = 'text-[8px] mt-1 text-right text-amber-300';
+                ws.send(JSON.stringify({ type: 'camera_image_preset', preset: currentCameraPreset }));
+            }
+        }
+
+        function initCameraImagePreset() {
+            const slider = document.getElementById('camera-preset-slider');
+            const label = document.getElementById('camera-preset-label');
+            const presetIndex = CAMERA_PRESET_KEYS.indexOf(currentCameraPreset);
+            slider.value = String(presetIndex);
+            label.innerText = CAMERA_PRESET_LABELS[presetIndex];
+            slider.addEventListener('input', () => {
+                label.innerText = CAMERA_PRESET_LABELS[Number(slider.value)];
+            });
+            slider.addEventListener('change', () => {
+                currentCameraPreset = CAMERA_PRESET_KEYS[Number(slider.value)];
+                localStorage.setItem('terminator-camera-preset', currentCameraPreset);
+                sendCameraImagePreset();
+            });
+        }
+
         function renderCamsSidebar() {
             const sidebar = document.getElementById('cams-sidebar');
             sidebar.innerHTML = "";
@@ -792,6 +902,7 @@
 
         window.addEventListener('DOMContentLoaded', () => {
             initTacticalMap();
+            initCameraImagePreset();
             connectWebSocket();
         });
     </script>

@@ -17,6 +17,7 @@ import json
 import asyncio
 import time
 import subprocess
+import shutil
 import aiohttp
 from aiohttp import web
 
@@ -36,6 +37,15 @@ gps = GPSReader(port="/dev/ttyS0", baudrate=115200)
 imu = IMUReader(port="/dev/ttyAMA4", baudrate=115200)
 motors = None
 video_processes = {}
+usb_camera_devices = []
+
+# Valori iniziali per le EMEET C960 UVC; bilanciato corrisponde al settaggio
+# già provato dall'utente (8 ms, gain 0). Night/day sono preset regolabili.
+CAMERA_IMAGE_PRESETS = {
+    "night": {"exposure": 250, "gain": 15, "label": "Notturno"},
+    "balanced": {"exposure": 80, "gain": 0, "label": "Bilanciato"},
+    "daylight": {"exposure": 40, "gain": 0, "label": "Diurno"},
+}
 
 BASE_TAILSCALE_HOST = os.environ.get("BASE_TAILSCALE_HOST", "").strip()
 BASE_RTCM_PORT = int(os.environ.get("BASE_RTCM_PORT", "5000"))
@@ -117,6 +127,52 @@ def rileva_webcam_usb():
             if os.path.exists(dev) and dev not in devices:
                 devices.append(dev)
     return devices[:2]
+
+
+def apply_camera_image_preset(preset: str, devices=None) -> dict:
+    """Apply an allow-listed V4L2 image preset to both USB cameras."""
+    settings = CAMERA_IMAGE_PRESETS.get(preset)
+    if not settings:
+        return {"ok": False, "preset": preset, "detail": "Preset non valido."}
+
+    camera_devices = list(usb_camera_devices if devices is None else devices)
+    if not camera_devices:
+        return {"ok": False, "preset": preset, "detail": "Nessuna webcam USB rilevata."}
+
+    v4l2_ctl = shutil.which("v4l2-ctl")
+    if not v4l2_ctl:
+        return {"ok": False, "preset": preset, "detail": "v4l2-ctl non installato."}
+
+    errors = []
+    applied = 0
+    controls = (
+        "auto_exposure=1,"
+        f"exposure_time_absolute={settings['exposure']},"
+        f"gain={settings['gain']},backlight_compensation=0"
+    )
+    for device in camera_devices[:2]:
+        try:
+            result = subprocess.run(
+                [v4l2_ctl, f"--device={device}", f"--set-ctrl={controls}"],
+                capture_output=True,
+                text=True,
+                timeout=4,
+                check=False,
+            )
+            if result.returncode == 0:
+                applied += 1
+            else:
+                errors.append(f"{device}: {(result.stderr or result.stdout).strip()}")
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            errors.append(f"{device}: {exc}")
+
+    return {
+        "ok": applied == min(2, len(camera_devices)),
+        "preset": preset,
+        "label": settings["label"],
+        "applied": applied,
+        "detail": "; ".join(errors) if errors else f"Preset {settings['label']} applicato a {applied} webcam.",
+    }
 
 
 # --- FUNZIONI DI SCALATA SIMMETRICHE (TEST_MOTORI.PY) ---
@@ -224,6 +280,14 @@ async def ws_handler(request):
                     if msg_type == "heartbeat":
                         last_heartbeat = time.time()
 
+                    elif msg_type == "camera_image_preset":
+                        preset = str(cmd_data.get("preset", ""))
+                        result = await asyncio.to_thread(apply_camera_image_preset, preset)
+                        await ws.send_str(json.dumps({
+                            "type": "camera_image_preset_result",
+                            **result,
+                        }))
+
                     elif msg_type == "set_dry_run":
                         is_dry_run = bool(cmd_data.get("enabled", False))
                         if is_dry_run:
@@ -283,18 +347,27 @@ async def ws_handler(request):
                         is_recording = False
                         filename = f"{current_mission_name}_{int(time.time())}.json"
                         out_path = os.path.join(MISSIONS_DIR, filename)
-                        with open(out_path, "w", encoding="utf-8") as f:
-                            json.dump({
-                                "mission": current_mission_name,
-                                "timestamp": time.time(),
-                                "points_count": len(recorded_points),
-                                "points": recorded_points
-                            }, f, indent=2)
+                        try:
+                            with open(out_path, "w", encoding="utf-8") as f:
+                                json.dump({
+                                    "mission": current_mission_name,
+                                    "timestamp": time.time(),
+                                    "points_count": len(recorded_points),
+                                    "points": recorded_points
+                                }, f, indent=2)
+                        except Exception as exc:
+                            await ws.send_str(json.dumps({
+                                "type": "record_save_error",
+                                "message": str(exc),
+                            }))
+                            continue
 
                         resp = json.dumps({
                             "type": "record_completed",
                             "mission": current_mission_name,
                             "points_count": len(recorded_points),
+                            "filename": filename,
+                            "file_path": out_path,
                             "centerline": recorded_points
                         })
                         for c in list(ws_clients):
@@ -457,7 +530,7 @@ async def rover_uplink_task(app):
 # --- LIFECYCLE APPLICAZIONE ---
 
 async def on_startup(app):
-    global motors, video_processes, base_uplink_task_handle, rtcm_task_handle
+    global motors, video_processes, usb_camera_devices, base_uplink_task_handle, rtcm_task_handle
 
     app["base_http_session"] = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=3))
 
@@ -466,10 +539,10 @@ async def on_startup(app):
         subprocess.run(["pkill", "-9", "-f", "ustreamer"], stderr=subprocess.DEVNULL)
         time.sleep(0.3)
 
-        cam_devices = rileva_webcam_usb()
-        if not cam_devices:
+        usb_camera_devices = rileva_webcam_usb()
+        if not usb_camera_devices:
             print("[WARN] Nessuna webcam USB rilevata per ustreamer.")
-        for index, cam_dev in enumerate(cam_devices, start=1):
+        for index, cam_dev in enumerate(usb_camera_devices, start=1):
             port = 8080 + index
             cmd = [
                 "ustreamer",
@@ -487,6 +560,10 @@ async def on_startup(app):
                 print(f"[INFO] Camera USB {index}: stream ustreamer su porta {port} ({cam_dev})")
             else:
                 print(f"[WARN] ustreamer camera USB {index} terminato all'avvio ({cam_dev})")
+        if usb_camera_devices:
+            result = await asyncio.to_thread(apply_camera_image_preset, "balanced")
+            level = "INFO" if result["ok"] else "WARN"
+            print(f"[{level}] Preset videocamere: {result['detail']}")
     except Exception as e:
         print(f"[WARN] Impossibile avviare ustreamer: {e}")
         video_processes = {}

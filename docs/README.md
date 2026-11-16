@@ -7,6 +7,7 @@ Questa documentazione descrive il repository presente e valuta il percorso verso
 - [Analisi del codice e dello storico](analisi-codice.md): componenti realmente presenti, differenze rispetto allo storico e vulnerabilità prioritarie.
 - [Studio di efficacia e fattibilità](fattibilita-efficacia.md): benefici possibili, limiti sul campo, valutazione economica e quadro normativo da verificare.
 - [Specifiche obiettivo e piano di sviluppo](specifica-e-piano.md): architettura proposta, requisiti da definire e fasi per arrivare a prove sicure.
+- [Analisi e verifica GPS RTK](gap_analisi_risoluzione_GPSRTK.md): configurazione osservata, procedura ripetibile di verifica RTCM/seriale/GNSS e gap prima della guida autonoma.
 
 ## Sintesi
 
@@ -24,3 +25,5 @@ Le affermazioni sul comportamento del software sono riferite ai file effettivame
 ## Integrazione RTK Base / Rover
 
 Per il requisito attuale Base LC29H-BS / Rover LC29H-DA, fare riferimento a [Architettura RTK Base / Rover](architettura-rtk-base-rover.md): codice locale aggiunto per RTCM/Tailscale, persistenza dell'ultima posizione, frontend Netlify e passaggi di installazione. L'integrazione non è ancora verificata sui Raspberry. È una vista distinta dal piano del robot autonomo per sfalcio.
+
+Il nucleo geometrico Pure Pursuit è in `modules/pure_pursuit.py`; al momento calcola target e curvatura su coordinate metriche, senza collegarsi agli attuatori. Per i risultati della verifica hardware RTK e la procedura di ripetizione, vedere [Analisi e verifica GPS RTK](gap_analisi_risoluzione_GPSRTK.md).

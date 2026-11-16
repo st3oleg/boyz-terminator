@@ -1,6 +1,6 @@
 # Architettura RTK Base / Rover
 
-**Stato:** codice d'integrazione iniziale aggiunto in locale; installazione sui Raspberry e verifica end-to-end non ancora eseguite.
+**Stato:** flusso RTCM e RTK FIX verificati sul banco/campo con test manuale; installazione e verifica della versione d'integrazione completa restano da confermare.
 **Aggiornato:** 16 novembre 2026.
 
 ## Obiettivo concordato
@@ -16,7 +16,7 @@
 
 ### Rover
 
-Il repository `boyz-terminator-main` contiene `telemetry_server.py`, che serve la UI e la telemetria Rover su HTTP/WebSocket, e `modules/gps.py`, che legge NMEA da `/dev/ttyS0` a 115200 baud. Il modulo GPS interpreta GGA/RMC e lo stato FIX/FLOAT/SINGLE. In questa fase sono stati aggiunti `modules/rtcm_client.py`, che riconnette il client TCP RTCM, e la scrittura RTCM tramite il proprietario seriale `GPSReader`. Il server Rover include anche un uplink HTTP configurabile per inviare stato e telemetria alla Base. Queste aggiunte non sono ancora state eseguite sul Raspberry.
+Il repository `boyz-terminator-main` contiene `telemetry_server.py`, che serve la UI e la telemetria Rover su HTTP/WebSocket, e `modules/gps.py`, che legge NMEA da `/dev/ttyS0` a 115200 baud. Il modulo GPS interpreta GGA/RMC e lo stato FIX/FLOAT/SINGLE. In questa fase sono stati aggiunti `modules/rtcm_client.py`, che riconnette il client TCP RTCM, e la scrittura RTCM tramite il proprietario seriale `GPSReader`. Il server Rover include anche un uplink HTTP configurabile per inviare stato e telemetria alla Base. L'utente ha verificato separatamente il flusso TCP RTCM con CRC valido e un test seriale manuale che ha raggiunto RTK FIX; non è ancora confermato che la versione completa di questi moduli locali sia installata sul Raspberry.
 
 ### Base
 
