@@ -90,6 +90,8 @@ Se il requisito futuro comprende l'accesso quando anche il browser non ha Intern
 - `static/index.html` e `static/runtime-config.js`: API Base configurabile, marker Rover conservato/offline azzurro-grigio e stato del flusso RTCM.
 - `netlify.toml`: pubblica `static/` come sito statico.
 
+Il widget `Heartbeat Base` mostra l'età (`rover.age_seconds`) dell'ultimo pacchetto Rover ricevuto dalla Base tramite `GET /api/state`: verde quando `rover.online` è vero, grigio con stato offline quando il pacchetto supera la soglia impostata sul server Base (5 secondi di default), in attesa se non è ancora arrivato alcun pacchetto e offline quando l'API non risponde. È il tempo trascorso dall'ultimo uplink Rover, non una misura di latenza ICMP.
+
 Variabili Rover previste: `BASE_TAILSCALE_HOST`, `BASE_RTCM_PORT` (default `5000`), `BASE_API_URL` (default `http://<host>:8080/api/rover`) e `BASE_API_TOKEN`. `apiBaseUrl` in `static/runtime-config.js` è una configurazione pubblica, non deve contenere token.
 
 ### Repository Base

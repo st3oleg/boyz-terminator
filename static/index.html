@@ -514,6 +514,31 @@
         const baseMarker = L.marker([0, 0], { icon: baseIcon });
         baseMarker.bindPopup("<b>Antenna Base RTK</b>");
 
+        function aggiornaHeartbeatBase(rover, apiOnline = true) {
+            const display = document.getElementById('base-ping-display');
+            if (!display) return;
+
+            if (!apiOnline) {
+                display.innerText = 'offline';
+                display.className = 'text-sm font-black text-slate-500 dark:text-slate-400';
+                return;
+            }
+
+            const ageSeconds = Number(rover?.age_seconds);
+            if (!rover || rover.last_seen == null || rover.age_seconds == null || !Number.isFinite(ageSeconds)) {
+                display.innerText = 'in attesa dati Rover';
+                display.className = 'text-sm font-black text-slate-500 dark:text-slate-400';
+                return;
+            }
+
+            const age = Math.max(0, ageSeconds);
+            const online = rover.online === true;
+            display.innerText = online ? `${age.toFixed(1)} sec` : `offline · ${age.toFixed(1)} sec`;
+            display.className = online
+                ? 'text-sm font-black text-emerald-600 dark:text-emerald-400'
+                : 'text-sm font-black text-slate-500 dark:text-slate-400';
+        }
+
         // --- TELEMETRIA: API Base configurabile, fallback WebSocket Rover ---
         function aggiornaTelemetria(data) {
             const r = data.rover;
@@ -569,6 +594,7 @@
             }
 
             const b = data.base;
+            aggiornaHeartbeatBase(r);
             if (b && b.available !== false && b.lat != null && b.lon != null && Number.isFinite(Number(b.lat)) && Number.isFinite(Number(b.lon))) {
                 baseMarker.setLatLng([Number(b.lat), Number(b.lon)]);
                 if (!isBaseVisible) {
@@ -597,6 +623,7 @@
                         const status = document.getElementById('rtk-status-display');
                         status.innerText = 'API BASE OFFLINE';
                         document.getElementById('rtk-color-dot').className = 'w-3.5 h-3.5 rounded-full bg-slate-400 dark:bg-slate-500 shadow-inner';
+                        aggiornaHeartbeatBase(null, false);
                         if (isRoverVisible) {
                             roverMarker.setStyle({ fillColor: '#78909c', fillOpacity: 0.72 });
                             roverMarker.setPopupContent('<b>Ultima posizione nota</b><br>API Base non raggiungibile');
@@ -618,6 +645,7 @@
             };
             ws.onclose = () => {
                 document.getElementById('rtk-status-display').innerText = 'OFFLINE';
+                aggiornaHeartbeatBase(null, false);
                 if (isRoverVisible) {
                     roverMarker.setStyle({ fillColor: '#78909c', fillOpacity: 0.72 });
                     roverMarker.setPopupContent('<b>Rover offline</b><br>Ultima posizione nota');
