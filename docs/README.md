@@ -10,7 +10,9 @@ Questa documentazione descrive il repository presente e valuta il percorso verso
 
 ## Sintesi
 
-Il repository è una base di telemetria e teleoperazione. Riceve NMEA e dati IMU, comanda due motori differenziali, trasmette video e registra una traccia GPS. Non contiene ancora guida autonoma su waypoint, pianificazione della copertura, controllo di un apparato di taglio, sensori di ostacolo integrati o una catena di arresto di sicurezza indipendente.
+Il repository è una base di telemetria e teleoperazione. Riceve NMEA e dati IMU, comanda due motori differenziali, trasmette video e registra una traccia GPS. La mappa consente di disegnare, modificare e cancellare perimetri virtuali, salvati nel browser della console; la pagina Scatter raccoglie i fix Rover via WebSocket. Queste funzioni di interfaccia non costituiscono ancora un geofence applicato dal controllore del robot: non ci sono guida autonoma, pianificazione della copertura, correzioni RTCM/NTRIP, dati GNSS Base nel flusso corrente, controllo di un apparato di taglio, sensori di ostacolo integrati o una catena di arresto di sicurezza indipendente.
+
+Requisito d'impiego richiesto: l'autonomia dovrà essere consentita solo entro i perimetri autorizzati; fuori da essi il robot potrà essere comandato solo manualmente. Prima di abilitare l'autonomia, i perimetri dovranno essere disponibili e verificati dal controllore a bordo, insieme a margini coerenti con errore GNSS, dimensioni del veicolo e distanza di arresto.
 
 **Conclusione:** il concetto è plausibile per sfalcio frequente e leggero, soprattutto in appezzamenti piccoli e regolari; il codice attuale non dimostra né efficacia agronomica né sicurezza per l'uso autonomo. Prima di qualsiasi prova con lame attive, occorrono progettazione e validazione della sicurezza macchina.
 

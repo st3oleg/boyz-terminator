@@ -54,8 +54,27 @@ recorded_points = []
 last_recorded_lat = None
 last_recorded_lon = None
 
-# Coordinate Antenna Base
-BASE_COORDS = {"lat": 0.0, "lon": 0.0}
+# Coordinate Antenna Base (configurabili sul Raspberry tramite environment).
+def _base_coordinate(name):
+    try:
+        value = float(os.environ.get(name, ""))
+        return value if math.isfinite(value) else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+BASE_COORDS = {
+    "lat": _base_coordinate("BASE_LAT"),
+    "lon": _base_coordinate("BASE_LON"),
+}
+if not (-90 <= BASE_COORDS["lat"] <= 90 and -180 <= BASE_COORDS["lon"] <= 180):
+    BASE_COORDS = {"lat": 0.0, "lon": 0.0}
+BASE_COORDS["available"] = (
+    "BASE_LAT" in os.environ and "BASE_LON" in os.environ
+    and -90 <= BASE_COORDS["lat"] <= 90
+    and -180 <= BASE_COORDS["lon"] <= 180
+    and (BASE_COORDS["lat"] != 0.0 or BASE_COORDS["lon"] != 0.0)
+)
 
 ws_clients = set()
 
@@ -155,6 +174,13 @@ async def handle_autopilota(request):
     if os.path.exists(file_path):
         return web.FileResponse(file_path)
     return web.Response(text="File static/autopilota.html non trovato!", status=404)
+
+
+async def handle_scatter_analysis(request):
+    file_path = os.path.join(STATIC_DIR, "scatter_analysis.html")
+    if os.path.exists(file_path):
+        return web.FileResponse(file_path)
+    return web.Response(text="File static/scatter_analysis.html non trovato!", status=404)
 
 
 # --- GESTIONE COMANDI WEBSOCKET ---
@@ -320,6 +346,7 @@ async def telemetry_broadcaster():
                 "alt": g_data["alt"],
                 "satellites": g_data["satellites"],
                 "rtk_status": g_data["rtk_status"],
+                "fix_timestamp": g_data["last_update"],
                 "speed_kmh": g_data.get("speed_kmh", 0.0),
                 "heading": g_data.get("heading", 0.0)
             },
@@ -347,13 +374,15 @@ async def telemetry_broadcaster():
                 "alt": g_data["alt"],
                 "satellites": g_data["satellites"],
                 "rtk_status": g_data["rtk_status"],
+                "fix_timestamp": g_data["last_update"],
                 "pitch": i_data["pitch"],
                 "roll": i_data["roll"],
                 "yaw": i_data["yaw"]
             },
             "base": {
                 "lat": BASE_COORDS["lat"],
-                "lon": BASE_COORDS["lon"]
+                "lon": BASE_COORDS["lon"],
+                "available": BASE_COORDS["available"]
             }
         }
 
@@ -441,6 +470,7 @@ app.router.add_get('/index.html', handle_index)
 app.router.add_get('/impostazioni_widgets.html', handle_widgets)
 app.router.add_get('/autopilota.html', handle_autopilota)
 app.router.add_get('/automatico.html', handle_autopilota)
+app.router.add_get('/scatter_analysis.html', handle_scatter_analysis)
 
 # Rotta WebSocket
 app.router.add_get('/ws', ws_handler)

@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="it" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scatter Analysis - RTK GCS</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script> tailwind.config = { darkMode: 'class', } </script>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        
+        .pulse-record { animation: pulseRed 2s infinite; }
+        @keyframes pulseRed { 
+            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); border-color: rgba(239, 68, 68, 1); } 
+            70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); } 
+            100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); } 
+        }
+    </style>
+</head>
+<body class="bg-slate-100 text-slate-900 dark:bg-[#0f172a] dark:text-white min-h-screen flex flex-col">
+
+    <!-- Navbar -->
+    <nav class="w-full bg-white dark:bg-slate-900 border-b border-slate-300 dark:border-slate-700 shadow-md px-6 py-4 flex justify-between items-center sticky top-0 z-50">
+        <div class="font-bold text-xl tracking-wide flex items-center gap-3">
+            <span class="text-blue-500 text-2xl">🎯</span> 
+            <span>RTK<span class="text-blue-500 font-black">GCS</span> - Scatter Analysis</span>
+        </div>
+        <div class="flex gap-4 items-center">
+            <a href="index.html" class="text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 font-medium transition flex items-center gap-2">
+                ◀ Torna alla Mappa Live
+            </a>
+        </div>
+    </nav>
+
+    <!-- Contenitore Principale -->
+    <main class="flex-grow w-full max-w-[1600px] mx-auto p-4 md:p-6 flex flex-col gap-6">
+        
+        <!-- BARRA DI CONTROLLO -->
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center bg-white dark:bg-slate-800 p-4 md:p-6 rounded-2xl shadow-lg border border-slate-200 dark:border-slate-700">
+            <div>
+                <h2 class="text-lg md:text-xl font-black text-slate-800 dark:text-white">Controllo Analisi Segnale</h2>
+                <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">Mantieni i dispositivi fisicamente fermi. Clicca Avvia per accumulare i dati LIVE.</p>
+                <p class="text-xs text-slate-500 dark:text-slate-400 mt-2">WebSocket: <span id="connection-status" class="font-bold text-amber-500">Connessione in corso…</span> · RTK Rover: <span id="rover-fix-status" class="font-bold">--</span></p>
+            </div>
+            
+            <div class="flex items-center gap-2 md:gap-4 mt-4 md:mt-0 w-full md:w-auto">
+                <select id="scale-selector" onchange="changeScale()" class="bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 text-sm md:text-base rounded-xl focus:ring-blue-500 focus:border-blue-500 block p-3 font-bold w-full md:w-auto outline-none transition">
+                    <option value="0.005">Raggio: 0.5 cm</option>
+                    <option value="0.01">Raggio: 1 cm</option>
+                    <option value="0.025">Raggio: 2.5 cm</option>
+                    <option value="0.05">Raggio: 5 cm</option>
+                    <option value="0.15" selected>Raggio: 15 cm</option>
+                    <option value="1.00">Raggio: 1 m</option>
+                </select>
+                <button id="btn-toggle-analysis" onclick="toggleAnalysis()" class="bg-green-500 hover:bg-green-400 text-white font-black py-3 px-6 rounded-xl transition-all shadow-lg active:scale-95 whitespace-nowrap w-full md:w-auto">
+                    ▶ AVVIA
+                </button>
+            </div>
+        </div>
+
+        <!-- GRIGLIA GRAFICI -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <!-- COLONNA SINISTRA: ROVER -->
+            <div class="flex flex-col gap-4 bg-white dark:bg-slate-800 p-4 rounded-2xl shadow-lg border border-slate-200 dark:border-slate-700 relative overflow-hidden">
+                <div class="flex justify-between items-center border-b border-slate-200 dark:border-slate-700 pb-2">
+                    <h2 class="text-2xl font-black text-blue-500 flex items-center gap-2">🎯 ROVER</h2>
+                    <span class="text-xs font-mono bg-slate-100 dark:bg-slate-900 px-3 py-1 rounded text-slate-500">Campioni: <span id="rover-count">0</span> / 3000</span>
+                </div>
+                
+                <div class="grid grid-cols-2 gap-2 mb-2">
+                    <div class="bg-slate-100 dark:bg-slate-900 p-2 rounded-lg text-center border border-green-500/30">
+                        <div class="text-[10px] text-slate-500 uppercase font-bold">CEP (50%)</div>
+                        <div class="text-green-500 font-mono font-black" id="rover-cep">0.000 m</div>
+                    </div>
+                    <div class="bg-slate-100 dark:bg-slate-900 p-2 rounded-lg text-center border border-red-500/30">
+                        <div class="text-[10px] text-slate-500 uppercase font-bold">2DRMS (95%)</div>
+                        <div class="text-red-500 font-mono font-black" id="rover-drms">0.000 m</div>
+                    </div>
+                </div>
+
+                <div id="rover-scatter" class="w-full h-[350px]"></div>
+                <div id="rover-hist" class="w-full h-[200px] border-t border-slate-200 dark:border-slate-700 pt-4"></div>
+            </div>
+
+            <!-- COLONNA DESTRA: ANTENNA BASE -->
+            <div class="flex flex-col gap-4 bg-white dark:bg-slate-800 p-4 rounded-2xl shadow-lg border border-slate-200 dark:border-slate-700 relative overflow-hidden">
+                <div class="flex justify-between items-center border-b border-slate-200 dark:border-slate-700 pb-2">
+                    <h2 class="text-2xl font-black text-orange-500 flex items-center gap-2">📡 ANTENNA (Base)</h2>
+                    <span class="text-xs font-mono bg-slate-100 dark:bg-slate-900 px-3 py-1 rounded text-slate-500">Campioni: <span id="base-count">0</span> / 3000</span>
+                </div>
+                <p id="base-stream-status" class="text-xs text-slate-500 dark:text-slate-400">Il server non sta pubblicando campioni GNSS della Base.</p>
+                
+                <div class="grid grid-cols-2 gap-2 mb-2">
+                    <div class="bg-slate-100 dark:bg-slate-900 p-2 rounded-lg text-center border border-green-500/30">
+                        <div class="text-[10px] text-slate-500 uppercase font-bold">CEP (50%)</div>
+                        <div class="text-green-500 font-mono font-black" id="base-cep">0.000 m</div>
+                    </div>
+                    <div class="bg-slate-100 dark:bg-slate-900 p-2 rounded-lg text-center border border-red-500/30">
+                        <div class="text-[10px] text-slate-500 uppercase font-bold">2DRMS (95%)</div>
+                        <div class="text-red-500 font-mono font-black" id="base-drms">0.000 m</div>
+                    </div>
+                </div>
+
+                <div id="base-scatter" class="w-full h-[350px]"></div>
+                <div id="base-hist" class="w-full h-[200px] border-t border-slate-200 dark:border-slate-700 pt-4"></div>
+            </div>
+        </div>
+
+        <!-- SEZIONE SPIEGAZIONE -->
+        <div class="bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-lg border border-slate-200 dark:border-slate-700 mt-4">
+            <h3 class="text-xl font-black text-slate-800 dark:text-white mb-4 border-b border-slate-200 dark:border-slate-700 pb-2">📘 Come leggere questa diagnostica</h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 text-sm text-slate-600 dark:text-slate-400">
+                <div>
+                    <h4 class="font-bold text-blue-500 mb-2">I Grafici</h4>
+                    <ul class="list-disc pl-5 space-y-2">
+                        <li><strong class="text-slate-800 dark:text-slate-200">Scatter Plot (Bersaglio 2D):</strong> Mostra dove cadono le registrazioni rispetto al centro (media matematica).</li>
+                        <li><strong class="text-slate-800 dark:text-slate-200">Istogramma Radiale (Gaussiana):</strong> Mostra la distribuzione dell'errore. Un picco alto vicino allo zero indica altissima precisione.</li>
+                    </ul>
+                </div>
+                <div>
+                    <h4 class="font-bold text-blue-500 mb-2">Le Metriche Statistiche</h4>
+                    <ul class="list-disc pl-5 space-y-2">
+                        <li><strong class="text-green-500">CEP (50%):</strong> Il raggio che contiene esattamente metà delle misurazioni.</li>
+                        <li><strong class="text-red-500">2DRMS (95%):</strong> Il raggio che contiene quasi tutte le misurazioni, indicando l'errore massimo operativo.</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <script>
+        const MAX_POINTS = 3000; 
+        const R_EARTH = 6378137.0; 
+
+        const fontColor = '#94a3b8'; 
+        const gridColor = '#334155';
+
+        // I campioni vengono accumulati solo quando l'analisi è attiva.
+        let isAnalyzing = false;
+        let currentScale = 0.15;
+        let roverDataArray = [];
+        let baseDataArray = [];
+        let lastRoverFixTime = null;
+        let lastBaseFixTime = null;
+
+        function setConnectionStatus(text, connected) {
+            const status = document.getElementById('connection-status');
+            status.innerText = text;
+            status.className = `font-bold ${connected ? 'text-green-500' : 'text-amber-500'}`;
+        }
+
+        function changeScale() {
+            currentScale = parseFloat(document.getElementById('scale-selector').value);
+            if (roverDataArray.length > 0) updateCharts(roverDataArray, 'rover');
+            else Plotly.react('rover-scatter', [], getScatterLayout('#3b82f6', 0, 0), {displayModeBar: false});
+            
+            if (baseDataArray.length > 0) updateCharts(baseDataArray, 'base');
+            else Plotly.react('base-scatter', [], getScatterLayout('#f97316', 0, 0), {displayModeBar: false});
+        }
+
+        function toggleAnalysis() {
+            const btn = document.getElementById('btn-toggle-analysis');
+            isAnalyzing = !isAnalyzing;
+            if (isAnalyzing) {
+                roverDataArray = [];
+                baseDataArray = [];
+                lastRoverFixTime = null;
+                lastBaseFixTime = null;
+                for (const id of ['rover-count', 'base-count']) document.getElementById(id).innerText = '0';
+                for (const id of ['rover-cep', 'rover-drms', 'base-cep', 'base-drms']) document.getElementById(id).innerText = '0.000 m';
+                document.getElementById('base-stream-status').innerText = 'In attesa di campioni GNSS Base dal server.';
+                Plotly.react('rover-scatter', [], getScatterLayout('#3b82f6', 0, 0), {displayModeBar: false});
+                Plotly.react('base-scatter', [], getScatterLayout('#f97316', 0, 0), {displayModeBar: false});
+                Plotly.react('rover-hist', [], getHistLayout(), {displayModeBar: false});
+                Plotly.react('base-hist', [], getHistLayout(), {displayModeBar: false});
+                btn.innerHTML = '■ STOP';
+                btn.classList.remove('bg-green-500', 'hover:bg-green-400');
+                btn.classList.add('bg-red-500', 'hover:bg-red-400', 'pulse-record');
+            } else {
+                btn.innerHTML = '▶ AVVIA';
+                btn.classList.remove('bg-red-500', 'hover:bg-red-400', 'pulse-record');
+                btn.classList.add('bg-green-500', 'hover:bg-green-400');
+            }
+        }
+
+        function collectSample(sample, source) {
+            if (!sample || !Number.isFinite(Number(sample.lat)) || !Number.isFinite(Number(sample.lon))) return;
+            if (sample.rtk_status === 'NO FIX') return;
+            const lat = Number(sample.lat);
+            const lon = Number(sample.lon);
+            if (lat === 0 || lon === 0) return;
+
+            const timeKey = sample.fix_timestamp ?? sample.last_update ?? sample.timestamp;
+            if (timeKey !== undefined && timeKey !== null && timeKey === source.lastFixTime) return;
+            source.lastFixTime = timeKey ?? `${lat},${lon},${Date.now()}`;
+            source.points.push({lat, lon});
+            if (source.points.length > MAX_POINTS) source.points.shift();
+            updateCharts(source.points, source.type);
+        }
+
+        function handleTelemetry(message) {
+            if (message.type !== 'telemetry') return;
+            const rover = message.rover || message.gps;
+            if (rover) {
+                document.getElementById('rover-fix-status').innerText = rover.rtk_status || 'NO FIX';
+                if (isAnalyzing) collectSample(rover, {type: 'rover', points: roverDataArray, get lastFixTime() { return lastRoverFixTime; }, set lastFixTime(value) { lastRoverFixTime = value; }});
+            }
+            if (message.base && isAnalyzing) {
+                const before = baseDataArray.length;
+                collectSample(message.base, {type: 'base', points: baseDataArray, get lastFixTime() { return lastBaseFixTime; }, set lastFixTime(value) { lastBaseFixTime = value; }});
+                if (baseDataArray.length !== before) document.getElementById('base-stream-status').innerText = 'Ricezione campioni GNSS Base attiva.';
+            }
+        }
+
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+            ws.onopen = () => setConnectionStatus('Connesso', true);
+            ws.onmessage = (event) => {
+                try { handleTelemetry(JSON.parse(event.data)); }
+                catch (error) { console.error('Frame WebSocket non valido:', error); }
+            };
+            ws.onerror = () => setConnectionStatus('Errore di connessione', false);
+            ws.onclose = () => {
+                setConnectionStatus('Disconnesso, nuovo tentativo…', false);
+                window.setTimeout(connectWebSocket, 1500);
+            };
+        }
+
+        // --- MATEMATICA E STATISTICA ---
+        function calcCentroid(data) {
+            if (data.length === 0) return { lat: 0, lon: 0 };
+            let sumLat = 0, sumLon = 0;
+            data.forEach(p => { sumLat += p.lat; sumLon += p.lon; });
+            return { lat: sumLat / data.length, lon: sumLon / data.length };
+        }
+
+        function latLonToMeters(pt, centroid) {
+            const latRad = pt.lat * Math.PI / 180;
+            const lonRad = pt.lon * Math.PI / 180;
+            const cLatRad = centroid.lat * Math.PI / 180;
+            const cLonRad = centroid.lon * Math.PI / 180;
+
+            const deltaLat = latRad - cLatRad;
+            const deltaLon = lonRad - cLonRad;
+
+            const y = deltaLat * R_EARTH;
+            const x = deltaLon * Math.cos(cLatRad) * R_EARTH; 
+            const r = Math.sqrt(x*x + y*y); 
+
+            return { x, y, r };
+        }
+
+        function calculateCEP(metersData) {
+            if(metersData.length === 0) return 0;
+            const rSorted = metersData.map(p => p.r).sort((a,b) => a - b);
+            return rSorted[Math.floor(rSorted.length / 2)]; 
+        }
+
+        function calculate2DRMS(metersData) {
+            if(metersData.length === 0) return 0;
+            let sumX2 = 0, sumY2 = 0;
+            metersData.forEach(p => { sumX2 += p.x*p.x; sumY2 += p.y*p.y; });
+            const varX = sumX2 / metersData.length;
+            const varY = sumY2 / metersData.length;
+            return 2 * Math.sqrt(varX + varY);
+        }
+
+        function getDynamicGridShapes() {
+            let shapes = [];
+            let steps = [];
+            if (currentScale === 1.00) steps = [0.25, 0.50, 0.75, 1.00]; 
+            else if (currentScale === 0.15) steps = [0.02, 0.05, 0.10, 0.15]; 
+            else if (currentScale === 0.05) steps = [0.01, 0.02, 0.03, 0.04, 0.05];
+            else if (currentScale === 0.025) steps = [0.005, 0.01, 0.015, 0.02, 0.025]; 
+            else if (currentScale === 0.01) steps = [0.002, 0.004, 0.006, 0.008, 0.010]; 
+            else if (currentScale === 0.005) steps = [0.001, 0.002, 0.003, 0.004, 0.005];
+
+            steps.forEach((step, index) => {
+                let isLast = index === steps.length - 1;
+                shapes.push({
+                    type: 'circle', x0: -step, y0: -step, x1: step, y1: step,
+                    line: { color: gridColor, dash: isLast ? 'solid' : 'dot', width: isLast ? 2 : 1 }
+                });
+            });
+            return shapes;
+        }
+
+        function getScatterLayout(solidColor, cep, drms) {
+            let shapes = getDynamicGridShapes();
+            shapes.push({ type: 'circle', x0: -cep, y0: -cep, x1: cep, y1: cep, line: { color: '#22c55e', dash: 'dash', width: 2 } });
+            shapes.push({ type: 'circle', x0: -drms, y0: -drms, x1: drms, y1: drms, line: { color: '#ef4444', dash: 'dot', width: 2 } });
+
+            return {
+                paper_bgcolor: 'transparent', plot_bgcolor: 'transparent',
+                font: { color: fontColor },
+                margin: { l: 40, r: 20, t: 10, b: 40 },
+                xaxis: { range: [-currentScale, currentScale], title: 'Est - Ovest (m)', gridcolor: gridColor, zerolinecolor: fontColor },
+                yaxis: { range: [-currentScale, currentScale], title: 'Sud - Nord (m)', gridcolor: gridColor, zerolinecolor: fontColor, scaleanchor: 'x', scaleratio: 1 },
+                shapes: shapes
+            };
+        }
+
+        function getHistLayout() {
+            return {
+                paper_bgcolor: 'transparent', plot_bgcolor: 'transparent',
+                font: { color: fontColor },
+                margin: { l: 40, r: 20, t: 10, b: 30 },
+                xaxis: { range: [0, currentScale], title: 'Errore Radiale (m)', gridcolor: gridColor },
+                yaxis: { title: 'Frequenza', gridcolor: gridColor }
+            };
+        }
+
+        // --- FUNZIONE DI AGGIORNAMENTO GRAFICI ---
+        function updateCharts(data, type) {
+            const isRover = type === 'rover';
+            const scatterId = isRover ? 'rover-scatter' : 'base-scatter';
+            const histId = isRover ? 'rover-hist' : 'base-hist';
+            const countId = isRover ? 'rover-count' : 'base-count';
+            const cepId = isRover ? 'rover-cep' : 'base-cep';
+            const drmsId = isRover ? 'rover-drms' : 'base-drms';
+            
+            const markerColor = isRover ? 'rgba(59, 130, 246, 0.5)' : 'rgba(249, 115, 22, 0.5)';
+            const solidColor = isRover ? '#3b82f6' : '#f97316';
+
+            document.getElementById(countId).innerText = data.length;
+            if (data.length === 0) return;
+
+            const centroid = calcCentroid(data);
+            const metersData = data.map(pt => latLonToMeters(pt, centroid));
+            
+            const cep = calculateCEP(metersData);
+            const drms = calculate2DRMS(metersData);
+            
+            document.getElementById(cepId).innerText = cep.toFixed(3) + " m";
+            document.getElementById(drmsId).innerText = drms.toFixed(3) + " m";
+
+            const xVals = metersData.map(pt => pt.x);
+            const yVals = metersData.map(pt => pt.y);
+            const rVals = metersData.map(pt => pt.r);
+
+            const scatterTrace = {
+                x: xVals, y: yVals, mode: 'markers', type: 'scatter',
+                marker: { color: markerColor, size: 8, line: { width: 0 } }
+            };
+            Plotly.react(scatterId, [scatterTrace], getScatterLayout(solidColor, cep, drms), {displayModeBar: false});
+
+            const binSize = currentScale / 30; 
+            const histTrace = {
+                x: rVals, type: 'histogram',
+                marker: { color: markerColor, line: { color: solidColor, width: 1 } },
+                xbins: { start: 0, end: currentScale, size: binSize } 
+            };
+            Plotly.react(histId, [histTrace], getHistLayout(), {displayModeBar: false});
+        }
+
+        changeScale();
+        connectWebSocket();
+    </script>
+</body>
+</html>

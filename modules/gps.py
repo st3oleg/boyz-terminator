@@ -9,6 +9,8 @@ import threading
 import time
 import serial
 
+FIX_TIMEOUT_SECONDS = 3.0
+
 
 class GPSReader:
     def __init__(self, port="/dev/ttyS0", baudrate=115200, timeout=1.0):
@@ -118,7 +120,12 @@ class GPSReader:
 
     def get_data(self) -> dict:
         with self.lock:
-            return dict(self.data)
+            data = dict(self.data)
+        # Non mantenere FIX/FLOAT/SINGLE visualizzati se il flusso GNSS si interrompe.
+        if not data["last_update"] or time.time() - data["last_update"] > FIX_TIMEOUT_SECONDS:
+            data["rtk_status"] = "NO FIX"
+            data["satellites"] = 0
+        return data
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@
 
 ## 1. Perimetro e qualità delle evidenze
 
-Ho potuto verificare direttamente il progetto presente in `boyz-terminator-main`: server aiohttp, lettori GPS/IMU, driver motori, tre pagine statiche e script dimostrativi. Ho letto anche i requisiti riportati nel testo incollato.
+Ho potuto verificare direttamente il progetto presente in `boyz-terminator-main`: server aiohttp, lettori GPS/IMU, driver motori, quattro pagine statiche e script dimostrativi. Ho letto anche i requisiti riportati nel testo incollato e le successive richieste di geofencing e diagnostica Scatter.
 
 Il testo descrive un secondo progetto GCS/Cloud basato su Netlify e Supabase, con `rover_manager.py`, `base_manager.py`, SQLite, pagine registrazioni/riproduzione e schema cloud; tali sorgenti, configurazioni di deploy e schema Supabase non sono presenti nel workspace esaminato. Non posso quindi certificare come funzionino davvero né pianificare migrazioni puntuali prima di averli ricevuti. Le righe relative a quel progetto in questo documento sono ipotesi ricavate dal report incollato.
 
@@ -17,7 +17,9 @@ Il documento incollato contiene credenziali Wi-Fi e credenziali di accesso in ch
 - `telemetry_server.py` gira su un singolo Raspberry: espone HTTP/WebSocket, invia telemetria GPS/IMU, controlla due motori, registra tracce JSON e avvia `ustreamer`.
 - `modules/gps.py` legge NMEA da `/dev/ttyS0`, dichiarato a 115200 baud; `modules/imu.py` legge angoli WT61 da `/dev/ttyAMA4`; `modules/motor.py` emette segnali per un Cytron MDDS30.
 - Le pagine HTML si collegano direttamente al server; il nome “Autopilota” non corrisponde a una logica di navigazione autonoma.
-- Non risultano nel progetto disponibile: client RTCM/NTRIP, bridge con Base, database locale/cloud, code di sincronizzazione, schema multi-dispositivo, encoder, acquisizione completa IMU, pianificatore automatico, stato batteria, geofence o stop di sicurezza indipendente.
+- La mappa consente ora di creare/modificare/eliminare poligoni autorizzati, salvati nel `localStorage` del browser. Il server e il controllore non li ricevono, quindi il geofence non limita i comandi né il movimento. Il requisito è consentire autonomia solo entro i confini autorizzati e mantenere disponibile il manuale fuori area.
+- La pagina Scatter accumula la posizione Rover tramite WebSocket; non riceve campioni Base perché il payload corrente pubblica coordinate Base a zero.
+- Non risultano nel progetto disponibile: client RTCM/NTRIP, bridge con Base, database locale/cloud, code di sincronizzazione, schema multi-dispositivo, encoder, acquisizione completa IMU, pianificatore automatico, stato batteria, enforcement geofence a bordo o stop di sicurezza indipendente.
 - Interfacce WebSocket e video non mostrano autenticazione/TLS. I comandi motore, il dry-run e la registrazione sono quindi un rischio se le porte sono raggiungibili da una rete non fidata.
 
 ### Secondo progetto descritto nel testo incollato
@@ -36,6 +38,8 @@ Il report lo descrive come due demoni (Rover e Base), buffer SQLite sul Rover, s
 ## 3. Architettura obiettivo proposta
 
 Supabase serve per identità, sessioni, telemetria, stato e archivio; non come trasporto del flusso RTCM in tempo reale. Il percorso correzioni dovrebbe restare un canale dedicato Base→Rover (NTRIP privato o tunnel autenticato), con controllo di età e stato delle correzioni. La registrazione primaria avviene su SQLite sul Rover e una coda durevole sincronizza Supabase in modo idempotente.
+
+I poligoni creati dalla console devono essere trasferiti e versionati come configurazione autorizzata sul Rover. Il controllore locale deve verificarli prima e durante ogni missione autonoma, applicare un margine coerente con errore GNSS, ingombro e arresto e passare allo stato sicuro se i limiti vengono superati o la localizzazione è incerta. In modalità manuale il superamento del confine può essere permesso solo con comando esplicito dell'operatore. Non affidare questo vincolo alla sola UI o alla rete.
 
 ```mermaid
 flowchart LR

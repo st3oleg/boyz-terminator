@@ -12,6 +12,14 @@ Non fissare ancora valori di velocità, massa, superficie giornaliera, pendenza 
 
 Calcola traiettorie, sequenza dei filari, manovre di testa, sovrapposizione del piatto, stato missione e ritorno/recupero. Deve lavorare su coordinate metriche locali e su una mappa con confini, ostacoli fissi e zone vietate. La pagina web è supervisione: una perdita della UI non deve lasciare il robot in moto.
 
+#### Geofencing e modalità manuale/autonoma
+
+- L'operatore deve poter disegnare più perimetri autorizzati sulla mappa, modificarne i vertici, rimuoverli e ritrovarli al successivo accesso. La UI corrente conserva i poligoni GeoJSON nel `localStorage` del browser; questa è una bozza di configurazione, non ancora una fonte condivisa o persistente sul robot.
+- Il requisito funzionale richiesto è: il robot può eseguire missioni autonome solo dentro un perimetro autorizzato. Fuori dai perimetri può muoversi solo in modalità manuale, con supervisione dell'operatore. Nessuna missione autonoma deve partire se i confini mancano, non sono validi o non sono disponibili al controllore a bordo.
+- La verifica deve avvenire nel controllore a bordo a ogni aggiornamento di posizione e prima di ogni comando autonomo, non soltanto nel browser. La modalità manuale può superare il confine solo tramite comando esplicito; l'interfaccia deve mostrare chiaramente modalità e stato del confine.
+- Definire una fascia di rispetto basata su errore e integrità GNSS, dimensioni/ingombro del robot e distanza/tempo di arresto. Se la posizione o il fix non sono affidabili, la missione autonoma deve essere sospesa e il robot deve attuare lo stato sicuro deciso dall'analisi dei rischi. I perimetri software non sostituiscono recinzioni o protezioni fisiche.
+- Specificare se servono anche zone interne vietate, gestione dei fori nei poligoni, import/export, versionamento, firma/configurazione autorizzata e comportamento in caso di modifica mentre una missione è attiva.
+
 ### 2. Localizzazione e percezione
 
 - GNSS RTK con qualità, timestamp, età delle correzioni, integrità e diagnostica; blocco della guida automatica se la soluzione non soddisfa i limiti definiti.
@@ -31,12 +39,18 @@ Pulsante di arresto fisico accessibile, stop remoto con feedback, abilitazione m
 
 WebSocket autenticato e cifrato, comandi con autorizzazione, numero di sequenza e scadenza, un solo controllore attivo con lease, registri immutabili degli eventi e aggiornamenti controllati. Separare rete macchina, rete supervisione e servizi video. Il comportamento in assenza di rete dev'essere locale e sicuro.
 
+#### Correzioni GNSS RTCM/NTRIP
+
+RTCM è il formato dei messaggi di correzione GNSS; NTRIP è un protocollo di trasporto in streaming su rete. Per ottenere RTK, una Base GNSS configurata come riferimento deve generare le correzioni e inoltrarle al ricevitore Rover. Implementare un servizio sul dispositivo Base e un client/bridge sul Rover che consegni i byte RTCM alla porta d'ingresso prevista dal ricevitore; il flusso di correzioni deve restare separato dal WebSocket della dashboard. In alternativa, se la Base usa una radio dedicata, il trasporto radio deve consegnare lo stesso flusso al Rover.
+
+Il sistema deve esporre alla telemetria almeno stato di connessione, età dell'ultima correzione, dati ricevuti e stato RTK. La modalità autonoma deve rifiutare o interrompere la missione quando le correzioni scadono o il fix non soddisfa i limiti definiti. Nell'implementazione attuale `modules/gps.py` legge NMEA da una seriale e non inoltra RTCM; il server Rover pubblica coordinate Base costanti a zero e non riceve misure GNSS della Base. Occorre verificare modello di ricevitore, interfacce seriali/radio, firmware, configurazione Base e modalità di trasporto prima di fissare i dettagli.
+
 ## Requisiti da definire prima del progetto dettagliato
 
 1. Coltura/appezzamento: filare o campo aperto, larghezza interfilare, lunghezza fila, ostacoli, pendenza e condizioni stagionali.
 2. Operazione: manutenzione frequente o primo taglio, altezza obiettivo, larghezza e tipo di apparato, gestione dei residui.
 3. Prestazioni: ha/giorno, qualità/capacità di copertura, precisione di traiettoria richiesta rispetto al piatto, autonomia e tempi di fermo.
-4. Limiti operativi: velocità, pendenza, pioggia/fango, persone/animali ammessi nell'area, recinzioni e confini.
+4. Limiti operativi: velocità, pendenza, pioggia/fango, persone/animali ammessi nell'area, recinzioni e confini; semantica e margine dei perimetri autorizzati e comportamento al passaggio tra manuale e autonomia.
 5. Veicolo: massa, dimensioni, baricentro, ruote, trazione, freni, energia, BMS, ricarica, protezione IP e gestione termica.
 6. Conformità: mercato e modalità di fornitura, destinazione d'uso, valutazione dei rischi, standard applicabili, fascicolo tecnico e processo di validazione.
 
@@ -44,7 +58,7 @@ WebSocket autenticato e cifrato, comandi con autorizzazione, numero di sequenza 
 
 `SPENTO → AUTOTEST → PRONTO → MANUALE oppure MISSIONE_SUPERVISIONATA → PAUSA/ARRESTO → RECUPERO → SPENTO`
 
-Ogni transizione deve richiedere condizioni esplicite. La missione può partire solo con sensori validi, confini caricati, attrezzo protetto, operatore autorizzato e presenza dell'operatore nella zona di supervisione definita. Per perdita RTK, ostacolo, inclinazione eccessiva, errore attuatore, batteria fuori soglia, sensore non aggiornato o anomalia termica, il robot deve interrompere la missione ed entrare nello stato sicuro previsto. Il “ritorno a casa” non va considerato più sicuro dello stop se la localizzazione o il percorso sono degradati.
+Ogni transizione deve richiedere condizioni esplicite. La missione autonoma può partire solo con sensori validi, perimetro autorizzato caricato e verificato, attrezzo protetto, operatore autorizzato e presenza dell'operatore nella zona di supervisione definita. Fuori da tutti i perimetri autorizzati è ammessa solo la modalità manuale; l'uscita dal perimetro durante l'autonomia deve attivare lo stato sicuro previsto. Per perdita RTK, correzioni RTCM scadute, ostacolo, inclinazione eccessiva, errore attuatore, batteria fuori soglia, sensore non aggiornato o anomalia termica, il robot deve interrompere la missione ed entrare nello stato sicuro previsto. Il “ritorno a casa” non va considerato più sicuro dello stop se la localizzazione o il percorso sono degradati.
 
 ## Piano a fasi con criteri di uscita
 
@@ -52,7 +66,7 @@ Ogni transizione deve richiedere condizioni esplicite. La missione può partire 
 |---|---|---|
 | 0 — Definizione | Specificare appezzamento, tipo di taglio, prestazioni attese e analisi preliminare dei rischi. Inventariare hardware reale e risolvere le discrepanze dello storico. | Requisiti misurabili e BOM/cablaggio verificati. |
 | 1 — Hardening teleoperazione | Autenticazione/TLS, accesso singolo, logging, watchdog dei sensori, stop fisico indipendente, protezione video e limiti motore. | Prove di perdita rete/processo/alimentazione dimostrano lo stato sicuro su banco. |
-| 2 — Navigazione senza attrezzo | Calibrare GNSS/IMU/encoder; acquisire confini; percorrere linee e svolte in area chiusa a velocità ridotta. | Dati ripetibili di errore, arresto e copertura; nessuna uscita dai limiti nelle prove definite. |
+| 2 — Navigazione senza attrezzo | Calibrare GNSS/IMU/encoder; acquisire perimetri autorizzati e trasferirli al controllore a bordo; percorrere linee e svolte in area chiusa a velocità ridotta. | Prove con confine, margine e perdita RTK dimostrano che l'autonomia non oltrepassa l'area autorizzata; modalità manuale verificata separatamente. |
 | 3 — Validazione ostacoli | Testare persone/manichini, oggetti bassi, pali, vegetazione, luce, polvere, pioggia simulata e terreno inclinato, con arresti misurati. | Requisiti protettivi e limiti d'uso documentati e verificati. |
 | 4 — Taglio in ambiente controllato | Attrezzo protetto, area segregata, supervisione ravvicinata; misurare qualità, capacità, energia e manutenzione contro baseline manuale. | Criteri agronomici, operativi ed economici raggiunti senza eventi di sicurezza. |
 | 5 — Pilota sorvegliato | Estendere progressivamente superfici/condizioni; registrare ogni intervento e fermata; aggiornare fascicolo di rischio. | Evidenza sufficiente per la modalità d'impiego prevista e valutazione di conformità completata prima della messa in servizio commerciale. |

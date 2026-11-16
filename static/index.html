@@ -10,10 +10,14 @@
     
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/@geoman-io/leaflet-geoman-free@latest/dist/leaflet-geoman.css" />
+    <script src="https://unpkg.com/@geoman-io/leaflet-geoman-free@latest/dist/leaflet-geoman.min.js"></script>
 
     <style>
         body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; font-family: 'Inter', sans-serif; }
         #map { height: 100vh; width: 100vw; position: absolute; top: 0; left: 0; z-index: 1; }
+        .base-antenna-marker { background: transparent; border: 0; }
+        .base-antenna-marker span { display: grid; place-items: center; width: 36px; height: 36px; border: 2px solid white; border-radius: 50%; background: #f97316; box-shadow: 0 2px 10px #0009; font-size: 20px; }
         .ui-layer { position: absolute; z-index: 1000; }
         .dark .leaflet-popup-content-wrapper, .dark .leaflet-popup-tip { background-color: #1e293b; color: #f8fafc; border: 1px solid #334155; }
         
@@ -42,7 +46,7 @@
             <a href="#" class="text-blue-500 font-semibold border-b-2 border-blue-500 pb-1">Mappa Live</a>
             <a href="registrazioni.html" class="text-slate-500 hover:text-slate-800 dark:text-slate-400 hover:dark:text-slate-200 font-medium transition">Registrazioni</a>
             
-            <a href="automatico.html" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3 py-1.5 rounded-xl transition text-xs md:text-sm shadow-md active:scale-95 flex items-center gap-1.5" title="Plancia Multi-Cam & Autopilota">
+            <a href="autopilota.html" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3 py-1.5 rounded-xl transition text-xs md:text-sm shadow-md active:scale-95 flex items-center gap-1.5" title="Plancia Multi-Cam & Autopilota">
                 <span>🌱</span> <span>Autopilota</span>
             </a>
 
@@ -93,6 +97,26 @@
             </div>
         </div>
     </nav>
+
+    <!-- PERIMETRI VIRTUALI: configurazione cartografica locale -->
+    <section id="geofence-widget" class="ui-layer top-16 left-3 md:top-20 md:left-6 pointer-events-auto bg-slate-900/90 text-white border border-slate-700 rounded-2xl shadow-xl p-3 w-48 backdrop-blur-md">
+        <div class="flex items-center justify-between border-b border-slate-700 pb-2 mb-2">
+            <span class="text-[10px] font-bold uppercase tracking-wider text-blue-400">📐 Perimetri robot</span>
+            <span id="geofence-count" class="text-[10px] text-slate-400">0 aree</span>
+        </div>
+        <div class="grid grid-cols-3 gap-1.5">
+            <button id="btn-geofence-draw" type="button" class="px-1 py-2 bg-slate-800 hover:bg-blue-600 rounded-lg text-[10px] font-bold transition" title="Disegna un'area autorizzata">
+                <span class="block text-base">⬡</span>Area
+            </button>
+            <button id="btn-geofence-edit" type="button" class="px-1 py-2 bg-slate-800 hover:bg-amber-500 rounded-lg text-[10px] font-bold transition" title="Modifica i vertici delle aree">
+                <span class="block text-base">✏️</span>Edita
+            </button>
+            <button id="btn-geofence-delete" type="button" class="px-1 py-2 bg-slate-800 hover:bg-red-600 rounded-lg text-[10px] font-bold transition" title="Rimuovi un'area">
+                <span class="block text-base">▦</span>Canc
+            </button>
+        </div>
+        <p id="geofence-message" class="text-[10px] text-slate-400 mt-2 leading-snug">Configurazione salvata su questo browser. Al momento non limita il movimento del robot.</p>
+    </section>
 
     <!-- ZONA WIDGET TELEMETRIA (IN ALTO A DESTRA) -->
     <div class="ui-layer top-16 md:top-20 right-3 md:right-6 flex flex-col gap-3 pointer-events-none z-50">
@@ -395,6 +419,69 @@
             }
         });
 
+        // --- PERIMETRI VIRTUALI (salvati sul browser della console) ---
+        const geofenceLayers = new L.FeatureGroup().addTo(map);
+        const geofenceStyle = { color: '#3b82f6', fillColor: '#3b82f6', fillOpacity: 0.25, weight: 3 };
+        const geofenceStorageKey = 'terminator_zones_geojson';
+        document.getElementById('geofence-widget').addEventListener('click', (event) => event.stopPropagation());
+        map.pm.setGlobalOptions({ layerGroup: geofenceLayers, snappable: true, snapDistance: 20 });
+        map.pm.setPathOptions(geofenceStyle);
+
+        function updateGeofenceCount() {
+            const count = geofenceLayers.getLayers().length;
+            document.getElementById('geofence-count').innerText = `${count} ${count === 1 ? 'area' : 'aree'}`;
+        }
+
+        function saveGeofences() {
+            try {
+                localStorage.setItem(geofenceStorageKey, JSON.stringify(geofenceLayers.toGeoJSON()));
+                updateGeofenceCount();
+            } catch (error) {
+                document.getElementById('geofence-message').innerText = 'Impossibile salvare i perimetri in questo browser.';
+                console.error('Salvataggio perimetri non riuscito:', error);
+            }
+        }
+
+        document.getElementById('btn-geofence-draw').addEventListener('click', () => {
+            map.pm.enableDraw('Polygon', { snappable: true, snapDistance: 20, pathOptions: geofenceStyle });
+            document.getElementById('geofence-message').innerText = 'Clicca sulla mappa per aggiungere vertici; chiudi il poligono per terminare.';
+        });
+        document.getElementById('btn-geofence-edit').addEventListener('click', () => {
+            map.pm.toggleGlobalEditMode();
+            document.getElementById('geofence-message').innerText = 'Trascina i vertici; premi di nuovo Edita per salvare.';
+        });
+        document.getElementById('btn-geofence-delete').addEventListener('click', () => {
+            map.pm.toggleGlobalRemovalMode();
+            document.getElementById('geofence-message').innerText = 'Clicca su un perimetro per rimuoverlo.';
+        });
+
+        map.on('pm:create', () => {
+            saveGeofences();
+            document.getElementById('geofence-message').innerText = 'Perimetro salvato su questo browser.';
+        });
+        map.on('pm:remove', saveGeofences);
+        map.on('pm:globaleditmodetoggled', (event) => {
+            if (!event.enabled) {
+                saveGeofences();
+                document.getElementById('geofence-message').innerText = 'Modifiche ai perimetri salvate.';
+            }
+        });
+
+        try {
+            const savedGeofences = localStorage.getItem(geofenceStorageKey);
+            if (savedGeofences) {
+                const parsedGeofences = JSON.parse(savedGeofences);
+                L.geoJSON(parsedGeofences, {
+                    filter: (feature) => feature.geometry?.type === 'Polygon' || feature.geometry?.type === 'MultiPolygon',
+                    style: geofenceStyle
+                }).eachLayer((layer) => geofenceLayers.addLayer(layer));
+            }
+        } catch (error) {
+            document.getElementById('geofence-message').innerText = 'Perimetri salvati non leggibili; ridisegna le aree.';
+            console.error('Caricamento perimetri non riuscito:', error);
+        }
+        updateGeofenceCount();
+
         // Marker GCS
         let gcsMarker = null;
         map.locate({setView: false, maxZoom: 16});
@@ -409,11 +496,18 @@
         let isRoverVisible = false; 
         let isBaseVisible = false;
         let mapCenteredOnce = false;
+        let baseMapCenteredOnce = false;
 
         const roverMarker = L.circleMarker([0, 0], { radius: 9, fillColor: "#3b82f6", color: "#fff", weight: 2.5, fillOpacity: 0.95 });
         roverMarker.bindPopup("<b>Rover Terminator</b>");
 
-        const baseMarker = L.circleMarker([0, 0], { radius: 9, fillColor: "#f97316", color: "#fff", weight: 2.5, fillOpacity: 0.95 });
+        const baseIcon = L.divIcon({
+            className: 'base-antenna-marker',
+            html: '<span aria-label="Antenna Base RTK">📡</span>',
+            iconSize: [36, 36],
+            iconAnchor: [18, 18]
+        });
+        const baseMarker = L.marker([0, 0], { icon: baseIcon });
         baseMarker.bindPopup("<b>Antenna Base RTK</b>");
 
         // --- WEBSOCKET TELEMETRIA ---
@@ -469,13 +563,19 @@
                         document.getElementById('imu-bubble').style.transform = `translate(calc(-50% + ${moveX}px), calc(-50% + ${moveY}px))`;
                     }
 
-                    if (data.base && data.base.lat && data.base.lat !== 0) {
+                    if (data.base && data.base.available && Number.isFinite(Number(data.base.lat)) && Number.isFinite(Number(data.base.lon))) {
                         baseMarker.setLatLng([data.base.lat, data.base.lon]);
                         if (!isBaseVisible) {
                             baseMarker.addTo(map);
                             isBaseVisible = true;
                         }
                         document.getElementById('base-coords-display').innerHTML = `Lat: ${data.base.lat.toFixed(6)}<br>Lon: ${data.base.lon.toFixed(6)}`;
+                        if (document.getElementById('current-device-label').innerText === 'ANTENNA' && !baseMapCenteredOnce) {
+                            map.setView([data.base.lat, data.base.lon], 18);
+                            baseMapCenteredOnce = true;
+                        }
+                    } else {
+                        document.getElementById('base-coords-display').innerText = 'Coordinate Base non configurate';
                     }
 
                 } catch(e) {
