@@ -91,3 +91,11 @@ La prova camera usa la stessa porta `8081` del primo stream avviato da `telemetr
 | `tests/test_camera.py` | Prova/regia delle videocamere | Pagina `8081`; stream USB interni `8082` e `8083` |
 
 I test hardware non sono avviati automaticamente dal server Rover. Avviali solo quando serve provare il componente corrispondente.
+
+## Integrazione RTK Base / Rover
+
+Il codice locale per client RTCM Rover, uplink API, archivio Base e frontend statico configurabile è stato aggiunto; non è ancora stato installato o verificato sui Raspberry. Lo stato verificato, i gap residui e la procedura sono in [docs/architettura-rtk-base-rover.md](docs/architettura-rtk-base-rover.md).
+
+La pagina statica in `static/` è pubblicabile su Netlify tramite `netlify.toml`. Impostare `apiBaseUrl` in `static/runtime-config.js` a un endpoint HTTPS della Base raggiungibile dal browser Tailscale. Netlify da solo non rende pubbliche le API private Tailscale; per accesso senza VPN servirà un endpoint relay autenticato.
+
+Il Rover usa le variabili `BASE_TAILSCALE_HOST`, `BASE_RTCM_PORT` (predefinita `5000`), `BASE_API_URL` e `BASE_API_TOKEN` per collegamento RTCM e uplink. Non inserire il token nel frontend o nel repository.

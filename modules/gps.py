@@ -22,6 +22,7 @@ class GPSReader:
         self.ser = None
 
         self.lock = threading.Lock()
+        self.serial_write_lock = threading.Lock()
         self.data = {
             "lat": 0.0,
             "lon": 0.0,
@@ -89,7 +90,9 @@ class GPSReader:
         while self.running:
             try:
                 if not self.ser or not self.ser.is_open:
-                    self.ser = serial.Serial(self.port, self.baudrate, timeout=self.timeout)
+                    with self.serial_write_lock:
+                        if not self.ser or not self.ser.is_open:
+                            self.ser = serial.Serial(self.port, self.baudrate, timeout=self.timeout)
 
                 raw_bytes = self.ser.readline()
                 if not raw_bytes:
@@ -112,11 +115,24 @@ class GPSReader:
 
     def stop(self):
         self.running = False
-        if self.ser:
+        with self.serial_write_lock:
+            if self.ser:
+                try:
+                    self.ser.close()
+                except Exception:
+                    pass
+
+    def write_rtcm(self, data: bytes) -> bool:
+        """Write raw RTCM bytes through this reader's serial connection."""
+        if not data:
+            return True
+        with self.serial_write_lock:
             try:
-                self.ser.close()
-            except Exception:
-                pass
+                if not self.ser or not self.ser.is_open:
+                    return False
+                return self.ser.write(data) == len(data)
+            except (serial.SerialException, OSError):
+                return False
 
     def get_data(self) -> dict:
         with self.lock:

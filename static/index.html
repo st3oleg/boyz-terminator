@@ -12,6 +12,7 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <link rel="stylesheet" href="https://unpkg.com/@geoman-io/leaflet-geoman-free@latest/dist/leaflet-geoman.css" />
     <script src="https://unpkg.com/@geoman-io/leaflet-geoman-free@latest/dist/leaflet-geoman.min.js"></script>
+    <script src="runtime-config.js"></script>
 
     <style>
         body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; font-family: 'Inter', sans-serif; }
@@ -149,6 +150,9 @@
                             <span id="rtk-status-display" class="text-sm font-black leading-none text-slate-800 dark:text-white">NO FIX</span>
                         </div>
                     </div>
+                </div>
+                <div class="mt-1 rounded-lg bg-white/85 dark:bg-slate-800/85 px-3 py-1.5 text-[10px] font-semibold text-slate-600 dark:text-slate-300 shadow">
+                    Correzioni RTCM: <span id="rtcm-link-display">non configurate</span>
                 </div>
             </div>
 
@@ -510,80 +514,116 @@
         const baseMarker = L.marker([0, 0], { icon: baseIcon });
         baseMarker.bindPopup("<b>Antenna Base RTK</b>");
 
-        // --- WEBSOCKET TELEMETRIA ---
-        function connectWebSocket() {
-            const loc = window.location;
-            const wsProtocol = loc.protocol === "https:" ? "wss://" : "ws://";
-            const wsUrl = `${wsProtocol}${loc.host}/ws`;
-
-            const ws = new WebSocket(wsUrl);
-
-            ws.onmessage = (event) => {
-                try {
-                    const data = JSON.parse(event.data);
-                    
-                    if (data.rover) {
-                        const r = data.rover;
-                        if (r.lat && r.lon && r.lat !== 0) {
-                            roverMarker.setLatLng([r.lat, r.lon]);
-                            if (!isRoverVisible) {
-                                roverMarker.addTo(map);
-                                isRoverVisible = true;
-                            }
-                            if (!mapCenteredOnce) {
-                                map.setView([r.lat, r.lon], 18);
-                                mapCenteredOnce = true;
-                            }
-                        }
-
-                        document.getElementById('siv-display').innerText = (r.satellites !== undefined) ? r.satellites : '--';
-                        document.getElementById('rtk-status-display').innerText = r.rtk_status || 'NO FIX';
-
-                        const colorDot = document.getElementById('rtk-color-dot');
-                        if (r.rtk_status === 'FIX') colorDot.className = 'w-3.5 h-3.5 rounded-full bg-green-500 shadow-[0_0_12px_rgba(34,197,94,0.9)]';
-                        else if (r.rtk_status === 'FLOAT') colorDot.className = 'w-3.5 h-3.5 rounded-full bg-yellow-400 shadow-[0_0_12px_rgba(250,204,21,0.9)]';
-                        else if (r.rtk_status === 'SINGLE') colorDot.className = 'w-3.5 h-3.5 rounded-full bg-blue-500 shadow-[0_0_12px_rgba(59,130,246,0.9)]';
-                        else colorDot.className = 'w-3.5 h-3.5 rounded-full bg-slate-400 dark:bg-slate-600 shadow-inner';
-
-                        document.getElementById('alt-display').innerText = `${Number(r.alt || 0).toFixed(2)} m`;
-
-                        const pitch = Number(r.pitch || 0);
-                        const roll = Number(r.roll || 0);
-                        const yaw = Number(r.yaw || 0);
-                        document.getElementById('imu-text-display').innerHTML = `P: ${pitch.toFixed(1)}°<br>R: ${roll.toFixed(1)}°<br>Y: ${yaw.toFixed(1)}°`;
-
-                        const maxMovement = 14; 
-                        let moveX = (roll / 90) * maxMovement; 
-                        let moveY = (pitch / 90) * maxMovement; 
-                        const dist = Math.sqrt(moveX*moveX + moveY*moveY);
-                        if (dist > maxMovement) {
-                            moveX = (moveX / dist) * maxMovement;
-                            moveY = (moveY / dist) * maxMovement;
-                        }
-                        document.getElementById('imu-bubble').style.transform = `translate(calc(-50% + ${moveX}px), calc(-50% + ${moveY}px))`;
+        // --- TELEMETRIA: API Base configurabile, fallback WebSocket Rover ---
+        function aggiornaTelemetria(data) {
+            const r = data.rover;
+            if (r) {
+                const lat = Number(r.lat);
+                const lon = Number(r.lon);
+                const hasPosition = r.lat !== null && r.lon !== null && Number.isFinite(lat) && Number.isFinite(lon) && !(lat === 0 && lon === 0);
+                const online = r.online !== false;
+                if (hasPosition) {
+                    roverMarker.setLatLng([lat, lon]);
+                    roverMarker.setStyle({ fillColor: online ? '#3b82f6' : '#78909c', fillOpacity: online ? 0.95 : 0.72 });
+                    const lastSeen = r.last_seen ? new Date(Number(r.last_seen) * 1000).toLocaleString() : '';
+                    roverMarker.setPopupContent(`<b>Rover ${online ? 'online' : 'offline'}</b><br>Lat: ${lat.toFixed(7)}<br>Lon: ${lon.toFixed(7)}${lastSeen ? `<br>Ultimo dato: ${lastSeen}` : ''}`);
+                    if (!isRoverVisible) {
+                        roverMarker.addTo(map);
+                        isRoverVisible = true;
                     }
-
-                    if (data.base && data.base.available && Number.isFinite(Number(data.base.lat)) && Number.isFinite(Number(data.base.lon))) {
-                        baseMarker.setLatLng([data.base.lat, data.base.lon]);
-                        if (!isBaseVisible) {
-                            baseMarker.addTo(map);
-                            isBaseVisible = true;
-                        }
-                        document.getElementById('base-coords-display').innerHTML = `Lat: ${data.base.lat.toFixed(6)}<br>Lon: ${data.base.lon.toFixed(6)}`;
-                        if (document.getElementById('current-device-label').innerText === 'ANTENNA' && !baseMapCenteredOnce) {
-                            map.setView([data.base.lat, data.base.lon], 18);
-                            baseMapCenteredOnce = true;
-                        }
-                    } else {
-                        document.getElementById('base-coords-display').innerText = 'Coordinate Base non configurate';
+                    if (!mapCenteredOnce) {
+                        map.setView([lat, lon], 18);
+                        mapCenteredOnce = true;
                     }
-
-                } catch(e) {
-                    console.error("Errore frame:", e);
                 }
-            };
 
-            ws.onclose = () => setTimeout(connectWebSocket, 1500);
+                document.getElementById('siv-display').innerText = (r.satellites !== undefined && r.satellites !== null) ? r.satellites : '--';
+                document.getElementById('rtk-status-display').innerText = online ? (r.rtk_status || 'NO FIX') : `OFFLINE · ${r.rtk_status || 'ultimo dato'}`;
+                const rtcm = r.rtcm || data.rtcm || {};
+                const correctionFresh = rtcm.age_seconds != null && Number(rtcm.age_seconds) <= 3;
+                const rtcmText = !rtcm.enabled ? 'non configurate' : (rtcm.connected && correctionFresh ? `ricezione · ${Number(rtcm.bytes_received || 0)} byte` : (rtcm.connected ? 'collegato, in attesa dati' : 'disconnesso'));
+                const rtcmLabel = document.getElementById('rtcm-link-display');
+                rtcmLabel.innerText = rtcmText;
+                rtcmLabel.className = rtcm.connected && correctionFresh ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-500 dark:text-slate-400';
+                const colorDot = document.getElementById('rtk-color-dot');
+                if (!online) colorDot.className = 'w-3.5 h-3.5 rounded-full bg-slate-400 dark:bg-slate-500 shadow-inner';
+                else if (r.rtk_status === 'FIX') colorDot.className = 'w-3.5 h-3.5 rounded-full bg-green-500 shadow-[0_0_12px_rgba(34,197,94,0.9)]';
+                else if (r.rtk_status === 'FLOAT') colorDot.className = 'w-3.5 h-3.5 rounded-full bg-yellow-400 shadow-[0_0_12px_rgba(250,204,21,0.9)]';
+                else if (r.rtk_status === 'SINGLE') colorDot.className = 'w-3.5 h-3.5 rounded-full bg-blue-500 shadow-[0_0_12px_rgba(59,130,246,0.9)]';
+                else colorDot.className = 'w-3.5 h-3.5 rounded-full bg-slate-400 dark:bg-slate-600 shadow-inner';
+
+                document.getElementById('alt-display').innerText = r.alt == null ? '-- m' : `${Number(r.alt).toFixed(2)} m`;
+                const pitch = Number(r.pitch || 0);
+                const roll = Number(r.roll || 0);
+                const yaw = Number(r.yaw || 0);
+                document.getElementById('imu-text-display').innerHTML = `P: ${pitch.toFixed(1)}°<br>R: ${roll.toFixed(1)}°<br>Y: ${yaw.toFixed(1)}°`;
+                const maxMovement = 14;
+                let moveX = (roll / 90) * maxMovement;
+                let moveY = (pitch / 90) * maxMovement;
+                const dist = Math.sqrt(moveX * moveX + moveY * moveY);
+                if (dist > maxMovement) {
+                    moveX = (moveX / dist) * maxMovement;
+                    moveY = (moveY / dist) * maxMovement;
+                }
+                document.getElementById('imu-bubble').style.transform = `translate(calc(-50% + ${moveX}px), calc(-50% + ${moveY}px))`;
+            }
+
+            const b = data.base;
+            if (b && b.available !== false && b.lat != null && b.lon != null && Number.isFinite(Number(b.lat)) && Number.isFinite(Number(b.lon))) {
+                baseMarker.setLatLng([Number(b.lat), Number(b.lon)]);
+                if (!isBaseVisible) {
+                    baseMarker.addTo(map);
+                    isBaseVisible = true;
+                }
+                document.getElementById('base-coords-display').innerHTML = `Lat: ${Number(b.lat).toFixed(6)}<br>Lon: ${Number(b.lon).toFixed(6)}`;
+                if (document.getElementById('current-device-label').innerText === 'ANTENNA' && !baseMapCenteredOnce) {
+                    map.setView([Number(b.lat), Number(b.lon)], 18);
+                    baseMapCenteredOnce = true;
+                }
+            } else {
+                document.getElementById('base-coords-display').innerText = 'Coordinate Base in attesa';
+            }
+        }
+
+        function connectWebSocket() {
+            const configuredApi = (window.TERMINATOR_CONFIG?.apiBaseUrl || '').replace(/\/+$/, '');
+            if (configuredApi) {
+                const pollBaseApi = async () => {
+                    try {
+                        const response = await fetch(`${configuredApi}/api/state`, { cache: 'no-store' });
+                        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                        aggiornaTelemetria(await response.json());
+                    } catch (error) {
+                        const status = document.getElementById('rtk-status-display');
+                        status.innerText = 'API BASE OFFLINE';
+                        document.getElementById('rtk-color-dot').className = 'w-3.5 h-3.5 rounded-full bg-slate-400 dark:bg-slate-500 shadow-inner';
+                        if (isRoverVisible) {
+                            roverMarker.setStyle({ fillColor: '#78909c', fillOpacity: 0.72 });
+                            roverMarker.setPopupContent('<b>Ultima posizione nota</b><br>API Base non raggiungibile');
+                        }
+                        console.warn('API Base non raggiungibile:', error);
+                    }
+                };
+                pollBaseApi();
+                setInterval(pollBaseApi, 1000);
+                return;
+            }
+
+            const loc = window.location;
+            const wsProtocol = loc.protocol === 'https:' ? 'wss://' : 'ws://';
+            const ws = new WebSocket(`${wsProtocol}${loc.host}/ws`);
+            ws.onmessage = (event) => {
+                try { aggiornaTelemetria(JSON.parse(event.data)); }
+                catch (error) { console.error('Errore frame:', error); }
+            };
+            ws.onclose = () => {
+                document.getElementById('rtk-status-display').innerText = 'OFFLINE';
+                if (isRoverVisible) {
+                    roverMarker.setStyle({ fillColor: '#78909c', fillOpacity: 0.72 });
+                    roverMarker.setPopupContent('<b>Rover offline</b><br>Ultima posizione nota');
+                }
+                setTimeout(connectWebSocket, 1500);
+            };
         }
 
         selectDevice('ROVER');

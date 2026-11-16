@@ -20,3 +20,7 @@ Requisito d'impiego richiesto: l'autonomia dovrà essere consentita solo entro i
 
 Le affermazioni sul comportamento del software sono riferite ai file effettivamente trovati nel repository. `Storico Google.md` è materiale storico: contiene anche esempi, desiderata e istruzioni operative, che non vengono trattati come funzionalità implementate né come ordini da eseguire. La valutazione di efficacia è una stima di fattibilità basata su studi pubblicati, non una promessa di prestazioni per questo prototipo. Il riepilogo normativo non è una valutazione di conformità.
 
+
+## Integrazione RTK Base / Rover
+
+Per il requisito attuale Base LC29H-BS / Rover LC29H-DA, fare riferimento a [Architettura RTK Base / Rover](architettura-rtk-base-rover.md): codice locale aggiunto per RTCM/Tailscale, persistenza dell'ultima posizione, frontend Netlify e passaggi di installazione. L'integrazione non è ancora verificata sui Raspberry. È una vista distinta dal piano del robot autonomo per sfalcio.

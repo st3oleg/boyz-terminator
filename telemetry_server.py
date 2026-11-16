@@ -17,6 +17,7 @@ import json
 import asyncio
 import time
 import subprocess
+import aiohttp
 from aiohttp import web
 
 BASE_DIR = "/home/terminator/Documents"
@@ -26,6 +27,7 @@ os.makedirs(MISSIONS_DIR, exist_ok=True)
 sys.path.append(BASE_DIR)
 
 from modules.gps import GPSReader
+from modules.rtcm_client import RTCMClient
 from modules.imu import IMUReader
 from modules.motor import MotorDriver
 
@@ -34,6 +36,16 @@ gps = GPSReader(port="/dev/ttyS0", baudrate=115200)
 imu = IMUReader(port="/dev/ttyAMA4", baudrate=115200)
 motors = None
 video_processes = {}
+
+BASE_TAILSCALE_HOST = os.environ.get("BASE_TAILSCALE_HOST", "").strip()
+BASE_RTCM_PORT = int(os.environ.get("BASE_RTCM_PORT", "5000"))
+BASE_API_URL = os.environ.get("BASE_API_URL", "").strip()
+if not BASE_API_URL and BASE_TAILSCALE_HOST:
+    BASE_API_URL = f"http://{BASE_TAILSCALE_HOST}:8080/api/rover"
+BASE_API_TOKEN = os.environ.get("BASE_API_TOKEN", "").strip()
+rtcm_client = RTCMClient(BASE_TAILSCALE_HOST, BASE_RTCM_PORT, gps.write_rtcm)
+base_uplink_task_handle = None
+rtcm_task_handle = None
 
 # =========================================================================
 # PARAMETRI E STATO TRAZIONE (LOGICA TEST_MOTORI.PY)
@@ -181,6 +193,14 @@ async def handle_scatter_analysis(request):
     if os.path.exists(file_path):
         return web.FileResponse(file_path)
     return web.Response(text="File static/scatter_analysis.html non trovato!", status=404)
+
+
+async def handle_runtime_config(request):
+    """Expose the non-secret runtime API URL config to the locally hosted UI."""
+    config_path = os.path.join(STATIC_DIR, "runtime-config.js")
+    if os.path.isfile(config_path):
+        return web.FileResponse(config_path, headers={"Cache-Control": "no-store"})
+    return web.Response(text="window.TERMINATOR_CONFIG = { apiBaseUrl: '' };", content_type="application/javascript")
 
 
 # --- GESTIONE COMANDI WEBSOCKET ---
@@ -383,7 +403,8 @@ async def telemetry_broadcaster():
                 "lat": BASE_COORDS["lat"],
                 "lon": BASE_COORDS["lon"],
                 "available": BASE_COORDS["available"]
-            }
+            },
+            "rtcm": rtcm_client.snapshot()
         }
 
         raw_json = json.dumps(payload)
@@ -394,10 +415,51 @@ async def telemetry_broadcaster():
                 pass
 
 
+async def rover_uplink_task(app):
+    """Send the latest Rover state to the Base for live/offline map display."""
+    if not BASE_API_URL:
+        print("[BASE] Uplink disattivato: configura BASE_API_URL o BASE_TAILSCALE_HOST.")
+        return
+
+    session = app["base_http_session"]
+    headers = {"Content-Type": "application/json"}
+    if BASE_API_TOKEN:
+        headers["Authorization"] = f"Bearer {BASE_API_TOKEN}"
+
+    while True:
+        g_data = gps.get_data()
+        i_data = imu.get_data()
+        payload = {
+            "lat": g_data["lat"] if g_data["last_update"] else None,
+            "lon": g_data["lon"] if g_data["last_update"] else None,
+            "alt": g_data["alt"] if g_data["last_update"] else None,
+            "satellites": g_data["satellites"],
+            "rtk_status": g_data["rtk_status"],
+            "fix_timestamp": g_data["last_update"] or None,
+            "speed_kmh": g_data.get("speed_kmh", 0.0),
+            "heading": g_data.get("heading", 0.0),
+            "pitch": i_data.get("pitch", 0.0),
+            "roll": i_data.get("roll", 0.0),
+            "yaw": i_data.get("yaw", 0.0),
+            "rtcm": rtcm_client.snapshot(),
+        }
+        try:
+            async with session.post(BASE_API_URL, json=payload, headers=headers) as response:
+                if response.status >= 400:
+                    print(f"[BASE] Uplink HTTP {response.status}")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            print(f"[BASE] Uplink non disponibile: {exc}")
+        await asyncio.sleep(1.0)
+
+
 # --- LIFECYCLE APPLICAZIONE ---
 
 async def on_startup(app):
-    global motors, video_processes
+    global motors, video_processes, base_uplink_task_handle, rtcm_task_handle
+
+    app["base_http_session"] = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=3))
 
     # 1. Rilevamento dinamico ed avvio dei due stream USB su porte 8081/8082
     try:
@@ -439,12 +501,25 @@ async def on_startup(app):
     # 3. Avvio Sensori & Tasks asincroni
     gps.start()
     imu.start()
+    if BASE_TAILSCALE_HOST:
+        rtcm_task_handle = asyncio.create_task(rtcm_client.run())
+    base_uplink_task_handle = asyncio.create_task(rover_uplink_task(app))
     asyncio.create_task(watchdog_task())
     asyncio.create_task(telemetry_broadcaster())
 
 
 async def on_cleanup(app):
-    global motors, video_processes
+    global motors, video_processes, base_uplink_task_handle, rtcm_task_handle
+
+    for task in (base_uplink_task_handle, rtcm_task_handle):
+        if task:
+            task.cancel()
+    await asyncio.gather(
+        *(task for task in (base_uplink_task_handle, rtcm_task_handle) if task),
+        return_exceptions=True,
+    )
+    base_uplink_task_handle = None
+    rtcm_task_handle = None
 
     for process in video_processes.values():
         try:
@@ -456,6 +531,7 @@ async def on_cleanup(app):
 
     gps.stop()
     imu.stop()
+    await app["base_http_session"].close()
     if motors:
         motors.close()
     for client in list(ws_clients):
@@ -471,6 +547,7 @@ app.router.add_get('/impostazioni_widgets.html', handle_widgets)
 app.router.add_get('/autopilota.html', handle_autopilota)
 app.router.add_get('/automatico.html', handle_autopilota)
 app.router.add_get('/scatter_analysis.html', handle_scatter_analysis)
+app.router.add_get('/runtime-config.js', handle_runtime_config)
 
 # Rotta WebSocket
 app.router.add_get('/ws', ws_handler)
