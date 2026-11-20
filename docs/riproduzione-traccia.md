@@ -2,7 +2,21 @@
 
 **20 novembre 2026 — sviluppo locale, non installato né verificato sul Rover fisico.**
 
-La pagina `riproduzione.html` è separata da `autopilota.html`, che resta la postazione di teleoperazione e registrazione. La pagina nuova elenca le missioni sul Rover, legge un geofence GeoJSON dal browser o da un file, chiede al server di validare la traccia e mostra l'anteprima live. Non contiene un comando di partenza. I motori non ricevono comandi dalla funzione di riproduzione.
+La pagina `riproduzione.html` è separata da `autopilota.html`, che resta la postazione di teleoperazione e registrazione. La pagina nuova elenca le missioni sul Rover, legge il geofence selezionato in `index.html` nello stesso browser e indirizzo, chiede al server di validare la traccia e mostra l'anteprima live. In `index.html` un clic sul poligono lo seleziona e lo evidenzia in arancione; se esiste una sola area, viene selezionata automaticamente. La selezione viene salvata insieme ai poligoni nel browser. Se cambia durante l'anteprima, occorre validare nuovamente la traccia. Non è una configurazione geofence persistita sul Rover. La pagina non contiene un comando di partenza. I motori non ricevono comandi dalla funzione di riproduzione.
+
+## Storico dal Rover e dal PC
+
+La sezione **Storico delle tracce** mostra le missioni della cartella `missions/` del Rover con data, numero di punti e presenza di campioni motore. Selezionando una missione, il server ne invia il JSON completo in sola lettura. La pagina disegna la forma della traccia, mostra qualità GNSS, lunghezza indicativa, tabella dei punti e JSON originale; **Scarica copia JSON** salva una copia sul PC. La lettura dello storico e la visualizzazione non avviano i motori.
+
+Sul PC si possono scegliere più file JSON o una cartella con il selettore del browser. Il browser non può leggere automaticamente l'intero disco: solo i file selezionati dall'utente vengono aperti. I file del PC restano locali durante la visualizzazione; se si preme **Valida**, il JSON viene inviato in memoria al Rover per l'anteprima, senza salvarlo in `missions/`.
+
+La pagina funziona anche aperta come `file:///.../static/riproduzione.html`: in questo caso occorre indicare l'indirizzo del Rover, per esempio `http://terminator.local:8080` oppure il suo IP. La comunicazione con il Rover usa il WebSocket `/ws`. Il geofence salvato nella Mappa Live è condiviso automaticamente solo se Mappa e Riproduzione sono aperte nello stesso browser **e nella stessa origine**; `file:///` e `http://terminator.local:8080` non condividono l'archivio del browser. Per usare la selezione della Mappa, aprire entrambe le pagine dall'indirizzo del Rover. In alternativa, la pagina locale permette di importare il GeoJSON del geofence dal PC per la sola anteprima.
+
+## Disegnare e salvare il geofence
+
+Nella sezione 2 di Riproduzione si può disegnare un singolo poligono sulla mappa satellitare, modificare i vertici, rimuoverlo, importare un `.geojson`/`.json` o tornare al poligono selezionato in Mappa Live. La traccia selezionata è sovrapposta alla mappa. Se non si dispone di un file, basta disegnare il poligono; i file esportati dalla pagina Rilievo e quelli già salvati in `Geofencing` sono importabili.
+
+La cartella del progetto `Geofencing/` è stata creata. **Salva sul PC in Geofencing** usa il selettore di cartella del browser: scegliere `boyz-terminator-main` oppure `Geofencing`; il file viene scritto nella sottocartella `Geofencing`. Nei browser senza accesso diretto alle cartelle, la pagina scarica il GeoJSON e indica di spostarlo manualmente in `Geofencing`. **Salva sul Rover in Geofencing** invia il poligono al server, che lo valida e salva in `/home/terminator/Documents/Geofencing/`; l'elenco permette poi di riaprirlo. Questa configurazione resta un'anteprima: il file salvato non abilita il movimento automatico.
 
 `modules/route_replay.py` verifica che la missione abbia almeno due posizioni distinte, punti RTK FIX, timestamp crescenti quando presenti, nessun salto maggiore di 5 m fra campioni e un percorso interamente dentro un singolo poligono GeoJSON con margine iniziale di 0,75 m dal bordo. Il margine è riferito alla posizione del ricevitore/centro, non all'ingombro completo del rover. La geometria del poligono va ancora verificata sul campo; non basta il dato salvato nel browser per autorizzare il movimento.
 

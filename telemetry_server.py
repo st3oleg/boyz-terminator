@@ -25,13 +25,16 @@ BASE_DIR = "/home/terminator/Documents"
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 MISSIONS_DIR = os.path.join(BASE_DIR, "missions")
 os.makedirs(MISSIONS_DIR, exist_ok=True)
+GEOFENCING_DIR = os.path.join(BASE_DIR, "Geofencing")
+os.makedirs(GEOFENCING_DIR, exist_ok=True)
 sys.path.append(BASE_DIR)
 
 from modules.gps import GPSReader
 from modules.rtcm_client import RTCMClient
 from modules.imu import IMUReader
 from modules.motor import MotorDriver
-from modules.route_replay import RouteReplay, load_mission
+from modules.route_replay import RouteReplay, load_mission, list_mission_history
+from modules.geofence_store import save_geofence, load_geofence, list_geofences, normalize_geofence
 
 # Inizializzazione Hardware
 gps = GPSReader(port="/dev/ttyS0", baudrate=115200)
@@ -349,6 +352,13 @@ async def handle_riproduzione(request):
     return web.Response(text="File static/riproduzione.html non trovato!", status=404)
 
 
+async def handle_riproduzione_js(request):
+    file_path = os.path.join(STATIC_DIR, "riproduzione.js")
+    if os.path.exists(file_path):
+        return web.FileResponse(file_path)
+    return web.Response(text="File static/riproduzione.js non trovato!", status=404)
+
+
 async def handle_replay_missions(request):
     names = sorted(
         name for name in os.listdir(MISSIONS_DIR)
@@ -381,7 +391,7 @@ async def ws_handler(request):
     global last_motor_command, last_motor_command_timestamp
     global replay_route, replay_mission, replay_preview
 
-    ws = web.WebSocketResponse()
+    ws = web.WebSocketResponse(max_msg_size=8_000_000)
     await ws.prepare(request)
     ws_clients.add(ws)
 
@@ -397,11 +407,57 @@ async def ws_handler(request):
                     if msg_type == "heartbeat":
                         last_heartbeat = time.time()
 
+                    elif msg_type == "replay_history":
+                        history = await asyncio.to_thread(list_mission_history, MISSIONS_DIR)
+                        await ws.send_str(json.dumps({"type": "replay_history_result", "history": history}))
+
+                    elif msg_type == "replay_read":
+                        filename = cmd_data.get("filename")
+                        try:
+                            mission = await asyncio.to_thread(load_mission, MISSIONS_DIR, filename)
+                            response = {"type": "replay_trace_result", "ok": True,
+                                        "filename": filename, "mission": mission,
+                                        "request_id": cmd_data.get("request_id")}
+                        except (ValueError, OSError, json.JSONDecodeError, TypeError) as exc:
+                            response = {"type": "replay_trace_result", "ok": False,
+                                        "detail": str(exc), "request_id": cmd_data.get("request_id")}
+                        await ws.send_str(json.dumps(response))
+
+                    elif msg_type == "geofence_list":
+                        entries = await asyncio.to_thread(list_geofences, GEOFENCING_DIR)
+                        await ws.send_str(json.dumps({"type": "geofence_list_result", "geofences": entries}))
+
+                    elif msg_type == "geofence_read":
+                        try:
+                            feature = await asyncio.to_thread(load_geofence, GEOFENCING_DIR, cmd_data.get("filename"))
+                            response = {"type": "geofence_read_result", "ok": True,
+                                        "filename": cmd_data.get("filename"), "geofence": feature}
+                        except (ValueError, OSError, json.JSONDecodeError, TypeError) as exc:
+                            response = {"type": "geofence_read_result", "ok": False, "detail": str(exc)}
+                        await ws.send_str(json.dumps(response))
+
+                    elif msg_type == "geofence_save":
+                        try:
+                            filename = await asyncio.to_thread(
+                                save_geofence, GEOFENCING_DIR, cmd_data.get("name", "Geofence"), cmd_data.get("geofence"))
+                            response = {"type": "geofence_save_result", "ok": True,
+                                        "filename": filename, "folder": GEOFENCING_DIR}
+                        except (ValueError, OSError, TypeError) as exc:
+                            response = {"type": "geofence_save_result", "ok": False, "detail": str(exc)}
+                        await ws.send_str(json.dumps(response))
+
                     elif msg_type == "replay_load":
+                        replay_route = None
+                        replay_mission = None
+                        replay_preview = None
                         try:
                             filename = cmd_data.get("filename")
-                            mission = load_mission(MISSIONS_DIR, filename)
-                            candidate = RouteReplay(mission, cmd_data.get("geofence"))
+                            mission = cmd_data.get("mission")
+                            if mission is None:
+                                mission = load_mission(MISSIONS_DIR, filename)
+                            elif not isinstance(mission, dict):
+                                raise ValueError("JSON missione non valido")
+                            candidate = RouteReplay(mission, normalize_geofence(cmd_data.get("geofence")))
                         except (ValueError, OSError, json.JSONDecodeError, TypeError) as exc:
                             await ws.send_str(json.dumps({"type": "replay_load_result", "ok": False, "detail": str(exc)}))
                         else:
@@ -902,6 +958,7 @@ app.router.add_get('/registrazioni.html', handle_registrazioni)
 app.router.add_get('/impostazioni_widgets.html', handle_widgets)
 app.router.add_get('/autopilota.html', handle_autopilota)
 app.router.add_get('/riproduzione.html', handle_riproduzione)
+app.router.add_get('/riproduzione.js', handle_riproduzione_js)
 app.router.add_get('/api/replay/missions', handle_replay_missions)
 app.router.add_get('/automatico.html', handle_autopilota)
 app.router.add_get('/scatter_analysis.html', handle_scatter_analysis)

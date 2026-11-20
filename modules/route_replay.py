@@ -217,7 +217,39 @@ def load_mission(missions_dir, filename):
     if not path.is_file() or path.stat().st_size > 5_000_000:
         raise ValueError("Missione assente o troppo grande")
     with path.open(encoding="utf-8-sig") as stream:
-        return json.load(stream)
+        mission = json.load(stream)
+    if not isinstance(mission, dict):
+        raise ValueError("JSON missione non valido")
+    return mission
+
+
+def list_mission_history(missions_dir, limit=200):
+    """List recent mission summaries without changing any recording."""
+    files = []
+    for path in Path(missions_dir).glob("*.json"):
+        try:
+            if path.is_file():
+                files.append((path.stat().st_mtime, path.name))
+        except OSError:
+            continue
+    history = []
+    for modified_at, filename in sorted(files, reverse=True)[:limit]:
+        try:
+            mission = load_mission(missions_dir, filename)
+            points = mission.get("points", [])
+            if not isinstance(points, list):
+                raise ValueError("Campo points non valido")
+            history.append({
+                "filename": filename,
+                "mission": str(mission.get("mission") or filename),
+                "timestamp": mission.get("timestamp") or modified_at,
+                "points_count": len(points),
+                "fix_count": sum(isinstance(point, dict) and point.get("rtk_status") == "FIX" for point in points),
+                "motor_samples": sum(isinstance(point, dict) and "motor_left_pct" in point for point in points),
+            })
+        except (ValueError, OSError, json.JSONDecodeError, TypeError):
+            history.append({"filename": filename, "error": "JSON non leggibile"})
+    return history
 
 
 class MotorCalibration:

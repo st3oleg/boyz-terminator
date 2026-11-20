@@ -1,10 +1,11 @@
 """Hardware-free checks for route validation and replay stop conditions."""
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
 
-from modules.route_replay import MotorCalibration, RouteReplay, load_mission
+from modules.route_replay import MotorCalibration, RouteReplay, list_mission_history, load_mission
 
 
 ORIGIN_LAT = 45.0
@@ -105,6 +106,20 @@ class RouteReplayTests(unittest.TestCase):
             self.assertEqual(load_mission(directory, "valid.json"), {"points": []})
             with self.assertRaisesRegex(ValueError, "Nome file"):
                 load_mission(directory, "../valid.json")
+
+    def test_history_reads_old_and_new_recordings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            older = mission()
+            newer = mission()
+            newer["points"][0]["motor_left_pct"] = 20
+            Path(directory, "old.json").write_text(json.dumps(older), encoding="utf-8")
+            Path(directory, "new.json").write_text(json.dumps(newer), encoding="utf-8")
+            Path(directory, "bad.json").write_text("{", encoding="utf-8")
+            history = {item["filename"]: item for item in list_mission_history(directory)}
+            self.assertEqual(history["old.json"]["fix_count"], 2)
+            self.assertEqual(history["old.json"]["motor_samples"], 0)
+            self.assertEqual(history["new.json"]["motor_samples"], 1)
+            self.assertIn("error", history["bad.json"])
 
 
 if __name__ == "__main__":

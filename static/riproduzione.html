@@ -4,9 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Riproduzione traccia · Terminator</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/@geoman-io/leaflet-geoman-free@latest/dist/leaflet-geoman.css">
+  <script src="https://unpkg.com/@geoman-io/leaflet-geoman-free@latest/dist/leaflet-geoman.min.js"></script>
   <style>
     :root{color-scheme:dark;font-family:system-ui,sans-serif;background:#0b1220;color:#e5edf8}
-    body{max-width:880px;margin:0 auto;padding:20px;line-height:1.45}
+    body{max-width:1040px;margin:0 auto;padding:20px;line-height:1.45}
     nav{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:24px}a{color:#7dd3fc}
     h1{margin-bottom:4px}h2{font-size:1.12rem;margin-top:0}
     .muted{color:#a4b2c6}.panel{background:#142033;border:1px solid #30435c;border-radius:12px;padding:18px;margin:16px 0}
@@ -17,6 +21,11 @@
     .badge{display:inline-block;border-radius:6px;padding:4px 9px;background:#374151}
     .error{color:#fda4af}.ok{color:#86efac}dl{display:grid;grid-template-columns:max-content 1fr;gap:8px 16px}
     dt{color:#a4b2c6}dd{margin:0;overflow-wrap:anywhere}
+    #history{width:100%;min-height:190px}#trace-svg{display:block;width:100%;height:auto;background:#07111d;border:1px solid #30435c;border-radius:8px}
+    #geo-map{height:420px;border:1px solid #30435c;border-radius:8px;margin:12px 0}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}.grid>*{min-width:0}
+    .table-wrap{max-height:320px;overflow:auto}table{border-collapse:collapse;width:100%;font-size:.85rem}th,td{padding:6px 9px;border-bottom:1px solid #30435c;text-align:left;white-space:nowrap}
+    pre{max-height:420px;overflow:auto;background:#07111d;padding:12px;border-radius:8px;font-size:.75rem}
   </style>
 </head>
 <body>
@@ -24,24 +33,76 @@
   <h1>Riproduzione traccia</h1>
   <p class="muted">Preparazione e anteprima live. Questa pagina non avvia il movimento: i motori restano sotto il controllo manuale.</p>
   <section class="panel">
-    <h2>1. Seleziona la traccia</h2>
-    <label for="mission">Missione salvata sul Rover</label>
-    <select id="mission"><option>Caricamento…</option></select>
-    <button id="refresh" class="secondary" type="button">Aggiorna elenco</button>
-    <p class="muted">Sono accettati solo punti RTK FIX, senza salti o timestamp fuori ordine.</p>
+    <h2>1. Storico delle tracce</h2>
+    <label for="rover-url">Indirizzo del Rover</label>
+    <input id="rover-url" type="url" size="42" placeholder="http://terminator.local:8080">
+    <button id="connect" type="button">Connetti al Rover</button>
+    <span id="connection" class="badge">Non connesso</span>
+    <p class="muted">Se hai aperto questa pagina con <code>file:///</code>, indica qui l’indirizzo del Rover. Puoi anche aprire <a id="rover-page" href="#">la pagina servita dal Rover</a> per condividere automaticamente il geofence selezionato nella Mappa.</p>
+    <div class="grid">
+      <div><label for="pc-files">Tracce dal PC (più file JSON)</label><input id="pc-files" type="file" accept=".json,application/json" multiple></div>
+      <div><label for="pc-folder">Oppure scegli una cartella del PC</label><input id="pc-folder" type="file" webkitdirectory multiple></div>
+    </div>
+    <p class="muted">Il browser legge solo i file che scegli tu. Le tracce del PC non vengono caricate o salvate sul Rover quando le visualizzi.</p>
+    <label for="history">Registrazioni disponibili</label>
+    <select id="history" size="8"><option value="">Collega il Rover o scegli file dal PC.</option></select>
+    <button id="refresh" class="secondary" type="button">Aggiorna storico Rover</button>
+    <p id="history-status" class="muted">In attesa delle registrazioni.</p>
   </section>
   <section class="panel">
-    <h2>2. Fornisci il geofence</h2>
-    <p id="fence-status" class="muted">Cerco il poligono salvato in questo browser…</p>
-    <label for="fence-file">Oppure importa un file GeoJSON Polygon</label>
+    <h2>Traccia selezionata</h2>
+    <p id="trace-title" class="muted">Seleziona una registrazione per vederla.</p>
+    <p class="muted">Schema della traccia senza connessione a Internet:</p>
+    <svg id="trace-svg" viewBox="0 0 640 360" role="img" aria-label="Disegno della traccia GPS">
+      <polyline id="trace-line" fill="none" stroke="#38bdf8" stroke-width="3" stroke-linejoin="round" stroke-linecap="round" points=""></polyline>
+      <circle id="trace-start" r="5" fill="#22c55e" cx="-20" cy="-20"></circle>
+      <circle id="trace-end" r="5" fill="#f43f5e" cx="-20" cy="-20"></circle>
+    </svg>
+    <dl>
+      <dt>Origine</dt><dd id="trace-source">—</dd>
+      <dt>Data</dt><dd id="trace-date">—</dd>
+      <dt>Punti</dt><dd id="trace-count">—</dd>
+      <dt>Qualità GNSS</dt><dd id="trace-quality">—</dd>
+      <dt>Lunghezza</dt><dd id="trace-length">—</dd>
+      <dt>Campioni con comandi motore</dt><dd id="trace-motors">—</dd>
+    </dl>
+    <button id="download" class="secondary" type="button" disabled>Scarica copia JSON</button>
+    <p id="point-note" class="muted"></p>
+    <div class="table-wrap"><table><thead><tr><th>#</th><th>Ora</th><th>Lat</th><th>Lon</th><th>RTK</th><th>Motore SX</th><th>Motore DX</th></tr></thead><tbody id="points-body"></tbody></table></div>
+    <details id="raw-details"><summary>Leggi il JSON completo</summary><pre id="raw-json"></pre></details>
+  </section>
+  <section class="panel">
+    <h2>2. Disegna o scegli il geofence</h2>
+    <p id="fence-status" class="muted">Cerco l’area selezionata in <a href="index.html">Mappa Live</a>…</p>
+    <p class="muted">Puoi disegnare qui un nuovo poligono, modificare quello mostrato oppure usare l’area selezionata in Mappa Live. Verde: partenza della traccia; rosso: arrivo.</p>
+    <div id="geo-map"></div>
+    <p id="map-status" class="muted">La mappa satellitare richiede Internet. Il file GeoJSON resta utilizzabile anche se la mappa non si carica.</p>
+    <button id="fence-draw" type="button">Disegna poligono</button>
+    <button id="fence-edit" class="secondary" type="button">Modifica vertici</button>
+    <button id="fence-clear" class="secondary" type="button">Rimuovi poligono</button>
+    <button id="center-trace" class="secondary" type="button">Centra traccia</button>
+    <p class="muted">Per chiudere il disegno, clicca il primo vertice. Dopo la modifica, premi di nuovo “Modifica vertici”.</p>
+    <label for="fence-file">Importa un file <code>.geojson</code> o <code>.json</code> con un singolo poligono</label>
     <input id="fence-file" type="file" accept=".json,.geojson,application/geo+json">
+    <p class="muted">Non devi caricare alcun file se disegni il geofence qui. Per importarne uno, usa un file salvato in <code>Geofencing</code> oppure il GeoJSON esportato dalla pagina <a href="registrazioni.html">Rilievo</a>.</p>
+    <button id="use-map-fence" class="secondary" type="button">Usa il geofence selezionato in Mappa Live</button>
+    <label for="fence-name">Nome del geofence da salvare</label>
+    <input id="fence-name" type="text" maxlength="64" value="Geofence_1">
+    <div>
+      <button id="save-pc-fence" type="button" disabled>Salva sul PC in Geofencing</button>
+      <button id="save-rover-fence" type="button" disabled>Salva sul Rover in Geofencing</button>
+    </div>
+    <p id="fence-save-status" class="muted">Sul PC scegli la cartella principale <code>boyz-terminator-main</code>: la pagina userà la sottocartella <code>Geofencing</code>.</p>
+    <label for="saved-fences">Geofence salvati sul Rover</label>
+    <select id="saved-fences"><option value="">Nessun elenco caricato</option></select>
+    <button id="refresh-fences" class="secondary" type="button">Aggiorna elenco</button>
+    <button id="open-rover-fence" class="secondary" type="button">Apri geofence scelto</button>
     <p class="muted">La traccia deve restare interamente all’interno del poligono, con almeno 0,75 m di margine per il suo centro. Questo margine è solo un parametro iniziale di verifica, non garantisce lo spazio per l’intero robot.</p>
-    <button id="load" type="button" disabled>Valida e mostra anteprima</button>
+    <button id="load" type="button" disabled>Valida la traccia selezionata e mostra anteprima live</button>
     <button id="unload" class="secondary" type="button">Chiudi anteprima</button>
   </section>
   <section class="panel" aria-live="polite">
     <h2>Stato</h2>
-    <span id="connection" class="badge">Connessione in corso</span>
     <p id="message" class="muted">In attesa.</p>
     <dl>
       <dt>Missione</dt><dd id="active-mission">—</dd>
@@ -55,72 +116,6 @@
       <dt>Attuazione</dt><dd>Disabilitata: calibrazione e monitor ostacoli da integrare.</dd>
     </dl>
   </section>
-  <script>
-    'use strict';
-    const $ = id => document.getElementById(id);
-    let ws, fence = null;
-    function show(id, value) { $(id).textContent = value == null ? '—' : String(value); }
-    function meters(value) { return value == null ? '—' : `${Number(value).toFixed(2)} m`; }
-    function refreshReady() { $('load').disabled = !(ws?.readyState === WebSocket.OPEN && fence && $('mission').value); }
-    async function refreshMissions() {
-      try {
-        const response = await fetch('/api/replay/missions', {cache:'no-store'});
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const data = await response.json();
-        $('mission').replaceChildren(...data.missions.map(name => new Option(name, name)));
-        if (!data.missions.length) $('mission').append(new Option('Nessuna missione', ''));
-      } catch (error) { show('message', `Elenco missioni: ${error.message}`); }
-      refreshReady();
-    }
-    function setFence(value, source) {
-      if (!value || typeof value !== 'object') throw new Error('GeoJSON non valido');
-      fence = value;
-      show('fence-status', `Geofence pronto: ${source}. Il server ne verificherà la geometria.`);
-      refreshReady();
-    }
-    try {
-      const saved = localStorage.getItem('terminator_zones_geojson');
-      if (saved) setFence(JSON.parse(saved), 'salvato nel browser');
-      else show('fence-status', 'Nessun geofence in questo browser: importa un GeoJSON.');
-    } catch (error) { show('fence-status', `Geofence nel browser non leggibile: ${error.message}`); }
-    $('fence-file').addEventListener('change', async event => {
-      const file = event.target.files[0];
-      if (!file) return;
-      try { setFence(JSON.parse(await file.text()), file.name); }
-      catch (error) { fence = null; show('fence-status', `File non valido: ${error.message}`); refreshReady(); }
-    });
-    $('refresh').onclick = refreshMissions;
-    $('mission').onchange = refreshReady;
-    $('load').onclick = () => ws.send(JSON.stringify({type:'replay_load', filename:$('mission').value, geofence:fence}));
-    $('unload').onclick = () => { if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({type:'replay_unload'})); };
-    function connect() {
-      ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws`);
-      ws.onopen = () => { show('connection', 'Connesso'); refreshReady(); };
-      ws.onclose = () => { show('connection', 'Disconnesso'); refreshReady(); setTimeout(connect, 1500); };
-      ws.onmessage = event => {
-        let data;
-        try { data = JSON.parse(event.data); } catch { return; }
-        if (data.type === 'replay_load_result') {
-          show('message', data.detail);
-          $('message').className = data.ok ? 'ok' : 'error';
-          if (data.mission) show('active-mission', `${data.mission} · ${data.points_count} punti · ${data.length_m} m`);
-          else if (data.ok) show('active-mission', '—');
-        }
-        if (data.type === 'telemetry' && data.replay) {
-          const p = data.replay.preview;
-          if (data.replay.mission && $('active-mission').textContent === '—') show('active-mission', data.replay.mission);
-          if (!p) return;
-          show('reason', p.reason);
-          show('heading', p.heading_source);
-          show('cross', meters(p.cross_track_error_m));
-          show('clearance', meters(p.boundary_clearance_m));
-          show('goal', meters(p.goal_distance_m));
-          show('curvature', p.curvature_1pm == null ? '—' : `${p.curvature_1pm} 1/m`);
-          show('target', p.target ? `${p.target.x_east_m} m est, ${p.target.y_north_m} m nord` : '—');
-        }
-      };
-    }
-    refreshMissions(); connect();
-  </script>
+  <script src="riproduzione.js"></script>
 </body>
 </html>

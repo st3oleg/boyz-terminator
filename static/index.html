@@ -118,6 +118,7 @@
             </button>
         </div>
         <p id="geofence-message" class="text-[10px] text-slate-400 mt-2 leading-snug">Configurazione salvata su questo browser. Al momento non limita il movimento del robot.</p>
+        <p id="geofence-selection" class="text-[10px] text-amber-300 mt-1 leading-snug">Nessuna area selezionata per la riproduzione.</p>
     </section>
 
     <!-- ZONA WIDGET TELEMETRIA (IN ALTO A DESTRA) -->
@@ -427,7 +428,10 @@
         // --- PERIMETRI VIRTUALI (salvati sul browser della console) ---
         const geofenceLayers = new L.FeatureGroup().addTo(map);
         const geofenceStyle = { color: '#3b82f6', fillColor: '#3b82f6', fillOpacity: 0.25, weight: 3 };
+        const selectedGeofenceStyle = { color: '#f59e0b', fillColor: '#f59e0b', fillOpacity: 0.3, weight: 4 };
         const geofenceStorageKey = 'terminator_zones_geojson';
+        const selectedGeofenceKey = 'terminator_selected_geofence_id';
+        let selectedGeofenceId = localStorage.getItem(selectedGeofenceKey) || null;
         document.getElementById('geofence-widget').addEventListener('click', (event) => event.stopPropagation());
         map.pm.setGlobalOptions({ layerGroup: geofenceLayers, snappable: true, snapDistance: 20 });
         map.pm.setPathOptions(geofenceStyle);
@@ -437,8 +441,48 @@
             document.getElementById('geofence-count').innerText = `${count} ${count === 1 ? 'area' : 'aree'}`;
         }
 
+        function ensureGeofenceId(layer) {
+            const feature = layer.toGeoJSON();
+            const properties = { ...(layer.feature?.properties || {}) };
+            if (!properties.replay_id) {
+                properties.replay_id = `area-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+            }
+            layer.feature = { type: 'Feature', properties, geometry: feature.geometry };
+            if (!layer._replaySelectionHandler) {
+                layer.on('click', () => {
+                    selectedGeofenceId = layer.feature.properties.replay_id;
+                    saveGeofences();
+                    document.getElementById('geofence-message').innerText = 'Area selezionata per la riproduzione.';
+                });
+                layer._replaySelectionHandler = true;
+            }
+            return properties.replay_id;
+        }
+
+        function syncGeofenceSelection() {
+            const layers = geofenceLayers.getLayers();
+            const selectable = layers.filter(layer => layer.toGeoJSON().geometry.type === 'Polygon');
+            const ids = selectable.map(ensureGeofenceId);
+            if (!ids.includes(selectedGeofenceId)) {
+                selectedGeofenceId = ids.length === 1 ? ids[0] : null;
+            }
+            layers.forEach((layer) => {
+                layer.setStyle(layer.feature?.properties?.replay_id === selectedGeofenceId
+                    ? selectedGeofenceStyle : geofenceStyle);
+            });
+            if (selectedGeofenceId) localStorage.setItem(selectedGeofenceKey, selectedGeofenceId);
+            else localStorage.removeItem(selectedGeofenceKey);
+            const selectedIndex = ids.indexOf(selectedGeofenceId);
+            document.getElementById('geofence-selection').innerText = selectedIndex >= 0
+                ? `Area ${selectedIndex + 1} selezionata per la riproduzione (bordo arancione).`
+                : selectable.length ? 'Clicca un’area sulla mappa per selezionarla per la riproduzione.'
+                    : layers.length ? 'Per la riproduzione serve un poligono semplice.'
+                    : 'Nessuna area selezionata per la riproduzione.';
+        }
+
         function saveGeofences() {
             try {
+                syncGeofenceSelection();
                 localStorage.setItem(geofenceStorageKey, JSON.stringify(geofenceLayers.toGeoJSON()));
                 updateGeofenceCount();
             } catch (error) {
@@ -460,7 +504,9 @@
             document.getElementById('geofence-message').innerText = 'Clicca su un perimetro per rimuoverlo.';
         });
 
-        map.on('pm:create', () => {
+        map.on('pm:create', (event) => {
+            if (!geofenceLayers.hasLayer(event.layer)) geofenceLayers.addLayer(event.layer);
+            selectedGeofenceId = ensureGeofenceId(event.layer);
             saveGeofences();
             document.getElementById('geofence-message').innerText = 'Perimetro salvato su questo browser.';
         });
@@ -472,6 +518,7 @@
             }
         });
 
+        let geofenceLoadFailed = false;
         try {
             const savedGeofences = localStorage.getItem(geofenceStorageKey);
             if (savedGeofences) {
@@ -482,10 +529,12 @@
                 }).eachLayer((layer) => geofenceLayers.addLayer(layer));
             }
         } catch (error) {
+            geofenceLoadFailed = true;
             document.getElementById('geofence-message').innerText = 'Perimetri salvati non leggibili; ridisegna le aree.';
             console.error('Caricamento perimetri non riuscito:', error);
         }
-        updateGeofenceCount();
+        if (geofenceLoadFailed) updateGeofenceCount();
+        else saveGeofences();
 
         // Marker GCS
         let gcsMarker = null;
