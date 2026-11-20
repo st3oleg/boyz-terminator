@@ -1,7 +1,7 @@
 # Architettura RTK Base / Rover
 
 **Stato:** flusso RTCM e RTK FIX verificati sul banco/campo con test manuale; installazione e verifica della versione d'integrazione completa restano da confermare.
-**Aggiornato:** 16 novembre 2026.
+**Aggiornato:** 19 novembre 2026.
 
 ## Obiettivo concordato
 
@@ -16,7 +16,9 @@
 
 ### Rover
 
-Il repository `boyz-terminator-main` contiene `telemetry_server.py`, che serve la UI e la telemetria Rover su HTTP/WebSocket, e `modules/gps.py`, che legge NMEA da `/dev/ttyS0` a 115200 baud. Il modulo GPS interpreta GGA/RMC e lo stato FIX/FLOAT/SINGLE. In questa fase sono stati aggiunti `modules/rtcm_client.py`, che riconnette il client TCP RTCM, e la scrittura RTCM tramite il proprietario seriale `GPSReader`. Il server Rover include anche un uplink HTTP configurabile per inviare stato e telemetria alla Base. L'utente ha verificato separatamente il flusso TCP RTCM con CRC valido e un test seriale manuale che ha raggiunto RTK FIX; non è ancora confermato che la versione completa di questi moduli locali sia installata sul Raspberry.
+Il repository `boyz-terminator-main` contiene `telemetry_server.py`, che serve UI e telemetria Rover su HTTP/WebSocket, e `modules/gps.py`, che legge NMEA da `/dev/ttyS0` a 115200 baud. Il modulo interpreta GGA/RMC e lo stato FIX/FLOAT/SINGLE. `modules/rtcm_client.py` mantiene una connessione TCP RTCM con riconnessione e `GPSReader` coordina lettura NMEA e scrittura RTCM sulla stessa seriale. Il server include un uplink HTTP configurabile verso la Base. È stato verificato manualmente il flusso TCP con CRC valido e il test seriale ha raggiunto RTK FIX; la versione completa d'integrazione resta da verificare sul Raspberry.
+
+Il server registra ora punti con qualità/freschezza GNSS, RTCM, IMU e comandi motore. L'interfaccia include un trim differenziale persistente applicato prima del driver; le potenze nominali mostrate e quelle effettivamente inviate sono conservate separatamente. La procedura per misurare la relazione comando/velocità è documentata in [Calibrazione motori e dati delle tracce](calibrazione-motori-e-tracce.md). Non è un componente del trasporto RTCM e non prova l'accuratezza della localizzazione.
 
 ### Base
 

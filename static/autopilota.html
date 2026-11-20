@@ -172,6 +172,7 @@
             <a href="index.html" class="p-1.5 bg-slate-800 hover:bg-slate-700 rounded-xl text-slate-300 hover:text-white transition flex items-center gap-1 text-[10px] font-bold" title="Torna all'Hub Mappa Live">
                 ◀ Mappa
             </a>
+            <a href="riproduzione.html" class="p-1.5 bg-slate-800 hover:bg-slate-700 rounded-xl text-sky-300 hover:text-white transition text-[10px] font-bold" title="Verifica traccia e geofence">Riproduzione</a>
             <div class="h-4 w-[1px] bg-slate-700"></div>
             <div class="flex items-center gap-1.5">
                 <span id="conn-dot" class="w-2 h-2 rounded-full bg-yellow-400 animate-pulse"></span>
@@ -243,7 +244,7 @@
             <div class="flex flex-col gap-1 text-[11px]">
                 <div class="flex justify-between font-bold">
                     <span class="text-slate-300">SX (GPIO 23):</span>
-                    <span id="pwr-sx-text" class="text-sky-300">+0% (1500us)</span>
+                    <span id="pwr-sx-text" class="text-sky-300">+0%</span>
                 </div>
                 <div class="w-full bg-slate-900 h-2 rounded-full overflow-hidden flex">
                     <div id="bar-sx-rev" class="bg-amber-500 h-full transition-all duration-75" style="width: 0%;"></div>
@@ -256,13 +257,28 @@
             <div class="flex flex-col gap-1 text-[11px]">
                 <div class="flex justify-between font-bold">
                     <span class="text-slate-300">DX (GPIO 19):</span>
-                    <span id="pwr-dx-text" class="text-sky-300">+0% (1500us)</span>
+                    <span id="pwr-dx-text" class="text-sky-300">+0%</span>
                 </div>
                 <div class="w-full bg-slate-900 h-2 rounded-full overflow-hidden flex">
                     <div id="bar-dx-rev" class="bg-amber-500 h-full transition-all duration-75" style="width: 0%;"></div>
                     <div class="w-[2px] bg-slate-700 h-full"></div>
                     <div id="bar-dx-fwd" class="bg-emerald-400 h-full transition-all duration-75" style="width: 0%;"></div>
                 </div>
+            </div>
+
+            <!-- Trim differenziale persistente: non altera le percentuali nominali mostrate sopra. -->
+            <div class="border-t border-slate-800 pt-1.5 mt-1 flex flex-col gap-1">
+                <div class="flex justify-between items-center text-[10px]">
+                    <label for="motor-trim-slider" class="font-bold text-slate-300">TRIM DIFFERENZIALE</label>
+                    <span id="motor-trim-value" class="font-bold text-amber-300">0%</span>
+                </div>
+                <input id="motor-trim-slider" type="range" min="-20" max="20" step="1" value="0"
+                    class="w-full h-1.5 accent-amber-400 cursor-pointer"
+                    aria-label="Trim differenziale motori">
+                <div class="flex justify-between text-[8px] text-slate-500">
+                    <span>+ SX / − DX</span><span>− SX / + DX</span>
+                </div>
+                <div id="motor-trim-status" class="text-[8px] text-slate-500 text-right">0% · + trim corregge la deriva verso destra</div>
             </div>
 
             <!-- D-Pad Pulsanti Touch / Click -->
@@ -390,6 +406,8 @@
         if (!CAMERA_PRESET_KEYS.includes(currentCameraPreset)) currentCameraPreset = 'balanced';
         let currentFps = 10;
         let ws = null;
+        let currentMotorTrim = 0;
+        let motorTrimStatusOverride = false;
         let isDryRun = false;
         let isRecording = false;
         let canSaveRecord = false;
@@ -431,6 +449,31 @@
 
         function setSpeedPreset(val) {
             updateSpeedUI(val);
+        }
+
+        const motorTrimSlider = document.getElementById('motor-trim-slider');
+        const motorTrimValue = document.getElementById('motor-trim-value');
+        const motorTrimStatus = document.getElementById('motor-trim-status');
+
+        function updateMotorTrimUI(value) {
+            currentMotorTrim = Math.max(-20, Math.min(20, parseInt(value, 10) || 0));
+            if (motorTrimSlider) motorTrimSlider.value = currentMotorTrim;
+            if (motorTrimValue) motorTrimValue.innerText = `${currentMotorTrim > 0 ? '+' : ''}${currentMotorTrim}%`;
+        }
+
+        function sendMotorTrim(value) {
+            updateMotorTrimUI(value);
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                motorTrimStatusOverride = true;
+                motorTrimStatus.innerText = 'Salvataggio…';
+                motorTrimStatus.className = 'text-[8px] text-amber-300 text-right';
+                ws.send(JSON.stringify({ type: 'set_motor_trim', trim_pct: currentMotorTrim }));
+            }
+        }
+
+        if (motorTrimSlider) {
+            motorTrimSlider.addEventListener('input', (event) => updateMotorTrimUI(event.target.value));
+            motorTrimSlider.addEventListener('change', (event) => sendMotorTrim(event.target.value));
         }
 
         // --- AVVIO STREAMING VIDEO ---
@@ -485,6 +528,12 @@
                         status.innerText = data.detail || (data.ok ? 'Preset applicato' : 'Preset non applicato');
                         status.className = `text-[8px] mt-1 text-right ${data.ok ? 'text-emerald-400' : 'text-rose-400'}`;
                     }
+                    else if (data.type === "motor_trim_result") {
+                        updateMotorTrimUI(data.trim_pct);
+                        motorTrimStatusOverride = true;
+                        motorTrimStatus.innerText = data.detail || (data.saved ? 'Trim salvato' : 'Trim attivo, non salvato');
+                        motorTrimStatus.className = `text-[8px] text-right ${data.saved ? 'text-emerald-400' : 'text-rose-400'}`;
+                    }
                     else if (data.type === "command_ack") {
                         const pending = pendingCommands.get(data.command_id);
                         if (!pending) return;
@@ -509,11 +558,16 @@
                         if (data.motors) {
                             const sx = data.motors.left_pct ?? 0;
                             const dx = data.motors.right_pct ?? 0;
-                            const us_sx = data.motors.left_us ?? 1500;
-                            const us_dx = data.motors.right_us ?? 1500;
+                            if (motorTrimSlider && !motorTrimSlider.matches(':active')) {
+                                updateMotorTrimUI(data.motors.trim_pct ?? 0);
+                            }
+                            if (motorTrimStatus && !motorTrimStatusOverride) {
+                                motorTrimStatus.innerText = `${currentMotorTrim > 0 ? '+' : ''}${currentMotorTrim}% · trim salvato`;
+                                motorTrimStatus.className = 'text-[8px] text-slate-500 text-right';
+                            }
 
-                            document.getElementById('pwr-sx-text').innerText = `${sx > 0 ? '+' : ''}${sx}% (${us_sx}us)`;
-                            document.getElementById('pwr-dx-text').innerText = `${dx > 0 ? '+' : ''}${dx}% (${us_dx}us)`;
+                            document.getElementById('pwr-sx-text').innerText = `${sx > 0 ? '+' : ''}${sx}%`;
+                            document.getElementById('pwr-dx-text').innerText = `${dx > 0 ? '+' : ''}${dx}%`;
 
                             document.getElementById('bar-sx-fwd').style.width = sx > 0 ? `${sx}%` : '0%';
                             document.getElementById('bar-sx-rev').style.width = sx < 0 ? `${Math.abs(sx)}%` : '0%';
@@ -698,8 +752,8 @@
                 }
             }
 
-            document.getElementById('pwr-sx-text').innerText = "+0% (1500us)";
-            document.getElementById('pwr-dx-text').innerText = "+0% (1500us)";
+            document.getElementById('pwr-sx-text').innerText = "+0%";
+            document.getElementById('pwr-dx-text').innerText = "+0%";
             document.getElementById('bar-sx-fwd').style.width = '0%';
             document.getElementById('bar-sx-rev').style.width = '0%';
             document.getElementById('bar-dx-fwd').style.width = '0%';

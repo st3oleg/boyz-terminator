@@ -31,6 +31,7 @@ from modules.gps import GPSReader
 from modules.rtcm_client import RTCMClient
 from modules.imu import IMUReader
 from modules.motor import MotorDriver
+from modules.route_replay import RouteReplay, load_mission
 
 # Inizializzazione Hardware
 gps = GPSReader(port="/dev/ttyS0", baudrate=115200)
@@ -62,9 +63,89 @@ rtcm_task_handle = None
 # =========================================================================
 START_PCT = 20  # Primo gradino da fermo per vincere l'attrito (20%)
 STEP_PCT  = 10  # Incremento/decremento a ogni pressione tasto (10%)
+MOTOR_TRIM_LIMIT_PCT = 20
+MOTOR_TRIM_CONFIG_PATH = os.environ.get(
+    "MOTOR_TRIM_CONFIG_PATH", os.path.join(BASE_DIR, "motor_calibration.json")
+)
+
+
+def _clamp_motor_pct(value):
+    return max(-100, min(100, int(round(float(value)))))
+
+
+def _clamp_motor_trim(value):
+    return max(-MOTOR_TRIM_LIMIT_PCT, min(MOTOR_TRIM_LIMIT_PCT, int(round(float(value)))))
+
+
+def _load_motor_trim():
+    try:
+        trim = _clamp_motor_trim(os.environ.get("MOTOR_TRIM_PCT", "0"))
+    except (TypeError, ValueError):
+        trim = 0
+    try:
+        with open(MOTOR_TRIM_CONFIG_PATH, "r", encoding="utf-8") as config_file:
+            config = json.load(config_file)
+        trim = _clamp_motor_trim(config.get("differential_trim_pct", trim))
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        pass
+    return trim
+
+
+def _save_motor_trim(trim_pct):
+    config_dir = os.path.dirname(MOTOR_TRIM_CONFIG_PATH) or "."
+    os.makedirs(config_dir, exist_ok=True)
+    temp_path = f"{MOTOR_TRIM_CONFIG_PATH}.{os.getpid()}.tmp"
+    with open(temp_path, "w", encoding="utf-8") as config_file:
+        json.dump({
+            "schema_version": 1,
+            "differential_trim_pct": trim_pct,
+            "sign": "positive boosts right and reduces left",
+        }, config_file, indent=2)
+        config_file.write("\n")
+    os.replace(temp_path, MOTOR_TRIM_CONFIG_PATH)
+
+
+def _trimmed_motor_outputs(left_pct, right_pct, trim_pct):
+    """Apply relative bias; positive trim speeds up right to correct right drift."""
+    left = _clamp_motor_pct(left_pct * (1.0 - trim_pct / 100.0))
+    right = _clamp_motor_pct(right_pct * (1.0 + trim_pct / 100.0))
+    return left, right
+
+
+def _motor_us(pct):
+    return int(1500 + _clamp_motor_pct(pct) * 5)
+
+
+def _motor_diagnostics():
+    return {
+        "command_left_pct": pwr_sx,
+        "command_right_pct": pwr_dx,
+        "trim_pct": motor_trim_pct,
+        "driver_left_pct": driver_pwr_sx,
+        "driver_right_pct": driver_pwr_dx,
+        "driver_left_us": _motor_us(driver_pwr_sx),
+        "driver_right_us": _motor_us(driver_pwr_dx),
+        "dry_run": is_dry_run,
+    }
+
+
+def _record_motor_event(event_type, command=None):
+    if not is_recording:
+        return
+    recorded_events.append({
+        "timestamp": time.time(),
+        "event": event_type,
+        "command": command,
+        **_motor_diagnostics(),
+    })
 
 pwr_sx = 0
 pwr_dx = 0
+motor_trim_pct = _load_motor_trim()
+driver_pwr_sx = 0
+driver_pwr_dx = 0
+last_motor_command = "startup"
+last_motor_command_timestamp = time.time()
 is_dry_run = False
 last_heartbeat = time.time()
 WATCHDOG_TIMEOUT = 1.0  # Arresto se nessun segnale per oltre 1.0 secondo
@@ -74,8 +155,14 @@ is_recording = False
 has_unsaved_record = False
 current_mission_name = "Filare_1"
 recorded_points = []
-last_recorded_lat = None
-last_recorded_lon = None
+recorded_events = []
+last_recorded_fix_timestamp = 0.0
+
+# La riproduzione e' per ora una diagnosi a motori fermi. Il controllo fisico
+# richiede calibrazione e monitor ostacoli; nessun messaggio WS puo' abilitarlo.
+replay_route = None
+replay_mission = None
+replay_preview = None
 
 # Coordinate Antenna Base (configurabili sul Raspberry tramite environment).
 def _base_coordinate(name):
@@ -203,21 +290,24 @@ def step_down(val: int) -> int:
 
 
 def apply_motor_speeds(sx: int, dx: int):
-    """Invia i valori di potenza al driver MDDS30 e aggiorna il watchdog."""
-    global pwr_sx, pwr_dx, last_heartbeat
-    pwr_sx = max(-100, min(100, int(sx)))
-    pwr_dx = max(-100, min(100, int(dx)))
+    """Keep nominal dashboard commands clean; apply trim only at the driver boundary."""
+    global pwr_sx, pwr_dx, driver_pwr_sx, driver_pwr_dx, last_heartbeat
+    pwr_sx = _clamp_motor_pct(sx)
+    pwr_dx = _clamp_motor_pct(dx)
+    driver_pwr_sx, driver_pwr_dx = _trimmed_motor_outputs(pwr_sx, pwr_dx, motor_trim_pct)
     last_heartbeat = time.time()
 
     if motors and not is_dry_run:
-        motors.set_motors(pwr_sx, pwr_dx)
+        motors.set_motors(driver_pwr_sx, driver_pwr_dx)
 
 
 def stop_all_motors():
     """Arresto immediato e azzeramento al neutro (1500 us)."""
-    global pwr_sx, pwr_dx
+    global pwr_sx, pwr_dx, driver_pwr_sx, driver_pwr_dx
     pwr_sx = 0
     pwr_dx = 0
+    driver_pwr_sx = 0
+    driver_pwr_dx = 0
     if motors:
         motors.stop()
 
@@ -229,6 +319,13 @@ async def handle_index(request):
     if os.path.exists(file_path):
         return web.FileResponse(file_path)
     return web.Response(text="File static/index.html non trovato!", status=404)
+
+
+async def handle_registrazioni(request):
+    file_path = os.path.join(STATIC_DIR, "registrazioni.html")
+    if os.path.exists(file_path):
+        return web.FileResponse(file_path)
+    return web.Response(text="File static/registrazioni.html non trovato!", status=404)
 
 
 async def handle_widgets(request):
@@ -243,6 +340,21 @@ async def handle_autopilota(request):
     if os.path.exists(file_path):
         return web.FileResponse(file_path)
     return web.Response(text="File static/autopilota.html non trovato!", status=404)
+
+
+async def handle_riproduzione(request):
+    file_path = os.path.join(STATIC_DIR, "riproduzione.html")
+    if os.path.exists(file_path):
+        return web.FileResponse(file_path)
+    return web.Response(text="File static/riproduzione.html non trovato!", status=404)
+
+
+async def handle_replay_missions(request):
+    names = sorted(
+        name for name in os.listdir(MISSIONS_DIR)
+        if name.endswith(".json") and os.path.isfile(os.path.join(MISSIONS_DIR, name))
+    )
+    return web.json_response({"missions": names})
 
 
 async def handle_scatter_analysis(request):
@@ -264,8 +376,10 @@ async def handle_runtime_config(request):
 
 async def ws_handler(request):
     global last_heartbeat, is_dry_run, is_recording, has_unsaved_record
-    global current_mission_name, recorded_points, last_recorded_lat, last_recorded_lon
-    global pwr_sx, pwr_dx
+    global current_mission_name, recorded_points, last_recorded_fix_timestamp
+    global recorded_events, pwr_sx, pwr_dx, motor_trim_pct
+    global last_motor_command, last_motor_command_timestamp
+    global replay_route, replay_mission, replay_preview
 
     ws = web.WebSocketResponse()
     await ws.prepare(request)
@@ -283,6 +397,30 @@ async def ws_handler(request):
                     if msg_type == "heartbeat":
                         last_heartbeat = time.time()
 
+                    elif msg_type == "replay_load":
+                        try:
+                            filename = cmd_data.get("filename")
+                            mission = load_mission(MISSIONS_DIR, filename)
+                            candidate = RouteReplay(mission, cmd_data.get("geofence"))
+                        except (ValueError, OSError, json.JSONDecodeError, TypeError) as exc:
+                            await ws.send_str(json.dumps({"type": "replay_load_result", "ok": False, "detail": str(exc)}))
+                        else:
+                            replay_route = candidate
+                            replay_mission = filename
+                            replay_preview = None
+                            await ws.send_str(json.dumps({
+                                "type": "replay_load_result", "ok": True,
+                                "detail": "Traccia validata. Anteprima attiva; motori disabilitati.",
+                                "mission": filename, "points_count": len(candidate.path),
+                                "length_m": round(candidate.length_m, 2),
+                            }))
+
+                    elif msg_type == "replay_unload":
+                        replay_route = None
+                        replay_mission = None
+                        replay_preview = None
+                        await ws.send_str(json.dumps({"type": "replay_load_result", "ok": True, "detail": "Anteprima chiusa."}))
+
                     elif msg_type == "camera_image_preset":
                         preset = str(cmd_data.get("preset", ""))
                         result = await asyncio.to_thread(apply_camera_image_preset, preset)
@@ -295,6 +433,40 @@ async def ws_handler(request):
                         is_dry_run = bool(cmd_data.get("enabled", False))
                         if is_dry_run:
                             stop_all_motors()
+                            last_motor_command = "dry_run_stop"
+                            last_motor_command_timestamp = time.time()
+                            _record_motor_event("dry_run_stop")
+
+                    elif msg_type == "set_motor_trim":
+                        old_trim = motor_trim_pct
+                        try:
+                            new_trim = _clamp_motor_trim(cmd_data.get("trim_pct", 0))
+                        except (TypeError, ValueError):
+                            saved = False
+                            detail = f"Valore non valido; trim attuale {motor_trim_pct:+d}%."
+                        else:
+                            motor_trim_pct = new_trim
+                            apply_motor_speeds(pwr_sx, pwr_dx)
+                            try:
+                                _save_motor_trim(motor_trim_pct)
+                                saved = True
+                                detail = "Trim applicato e salvato."
+                            except OSError as exc:
+                                saved = False
+                                detail = f"Trim attivo, ma salvataggio non riuscito: {exc}"
+                        last_motor_command = "motor_trim"
+                        last_motor_command_timestamp = time.time()
+                        _record_motor_event("motor_trim_changed", {
+                            "previous_trim_pct": old_trim,
+                            "applied_trim_pct": motor_trim_pct,
+                            "requested_trim_pct": cmd_data.get("trim_pct"),
+                        })
+                        await ws.send_str(json.dumps({
+                            "type": "motor_trim_result",
+                            "trim_pct": motor_trim_pct,
+                            "saved": saved,
+                            "detail": detail,
+                        }))
 
                     elif msg_type == "motor_step":
                         cmd = cmd_data.get("cmd", "").lower()
@@ -320,6 +492,9 @@ async def ws_handler(request):
                             pwr_dx = 0
 
                         apply_motor_speeds(pwr_sx, pwr_dx)
+                        last_motor_command = cmd or "unknown"
+                        last_motor_command_timestamp = time.time()
+                        _record_motor_event("motor_step", cmd)
 
                         command_id = cmd_data.get("command_id")
                         if command_id is not None:
@@ -332,6 +507,9 @@ async def ws_handler(request):
 
                     elif msg_type in ("stop", "estop"):
                         stop_all_motors()
+                        last_motor_command = msg_type
+                        last_motor_command_timestamp = time.time()
+                        _record_motor_event(msg_type)
                         command_id = cmd_data.get("command_id")
                         if command_id is not None:
                             await ws.send_str(json.dumps({
@@ -342,10 +520,21 @@ async def ws_handler(request):
                             }))
 
                     elif msg_type == "start_record":
-                        current_mission_name = cmd_data.get("mission_name", "Filare").strip() or "Filare"
+                        requested_name = cmd_data.get("mission_name", "Filare")
+                        if not isinstance(requested_name, str):
+                            requested_name = ""
+                        requested_name = requested_name.strip() or "Filare"
+                        if (len(requested_name) > 64 or
+                                any(not (char.isalnum() or char in " _-") for char in requested_name)):
+                            await ws.send_str(json.dumps({
+                                "type": "record_save_error",
+                                "message": "Nome missione non valido: usa lettere, numeri, spazi, _ o - (massimo 64 caratteri).",
+                            }))
+                            continue
+                        current_mission_name = requested_name
                         recorded_points = []
-                        last_recorded_lat = None
-                        last_recorded_lon = None
+                        recorded_events = []
+                        last_recorded_fix_timestamp = 0.0
                         is_recording = True
                         has_unsaved_record = True
                         print(f"[REC] Avvio '{current_mission_name}'")
@@ -365,9 +554,18 @@ async def ws_handler(request):
                             os.makedirs(MISSIONS_DIR, exist_ok=True)
                             with open(out_path, "w", encoding="utf-8") as f:
                                 json.dump({
+                                    "schema_version": 3,
                                     "mission": current_mission_name,
                                     "timestamp": time.time(),
                                     "points_count": len(recorded_points),
+                                    "sampling": "one sample per new GNSS GGA update",
+                                    "motor_calibration": {
+                                        "differential_trim_pct": motor_trim_pct,
+                                        "trim_sign": "positive boosts right and reduces left",
+                                        "nominal_percentages_are_dashboard_commands": True,
+                                        "driver_percentages_are_pwm_command_setpoints": True,
+                                    },
+                                    "diagnostic_events": recorded_events,
                                     "points": recorded_points
                                 }, f, indent=2)
                         except Exception as exc:
@@ -387,6 +585,7 @@ async def ws_handler(request):
                             "points_count": len(recorded_points),
                             "filename": filename,
                             "file_path": out_path,
+                            "diagnostic_events_count": len(recorded_events),
                             "centerline": recorded_points
                         })
                         for c in list(ws_clients):
@@ -406,49 +605,94 @@ async def ws_handler(request):
 
 async def watchdog_task():
     """Arresta i motori se non arrivano heartbeat o comandi per oltre 1.0 secondo."""
-    global last_heartbeat
+    global last_heartbeat, last_motor_command, last_motor_command_timestamp
     while True:
         await asyncio.sleep(0.1)
         if (time.time() - last_heartbeat) > WATCHDOG_TIMEOUT:
             if pwr_sx != 0 or pwr_dx != 0:
                 stop_all_motors()
+                last_motor_command = "watchdog_stop"
+                last_motor_command_timestamp = time.time()
+                _record_motor_event("watchdog_stop")
 
 
 async def telemetry_broadcaster():
     """Invia a 5 Hz il payload unificato per la Mappa e per la dashboard FPV."""
-    global last_recorded_lat, last_recorded_lon
+    global last_recorded_fix_timestamp, replay_preview
     while True:
         await asyncio.sleep(0.2)
 
         g_data = gps.get_data()
         i_data = imu.get_data()
+        if replay_route is not None:
+            rtcm_state = rtcm_client.snapshot()
+            replay_preview = replay_route.preview(
+                lat=g_data["lat"], lon=g_data["lon"],
+                rtk_status=g_data["rtk_status"],
+                fix_timestamp=g_data["last_update"], now=time.time(),
+                imu_yaw_deg=i_data["yaw"],
+                imu_age_seconds=(time.time() - i_data["last_update"] if i_data["last_update"] else None),
+                rtcm_age_seconds=rtcm_state.get("age_seconds"),
+                rtcm_connected=rtcm_state.get("connected", False),
+                obstacle_clear=False,
+                speed_kmh=g_data.get("speed_kmh"),
+                course_over_ground_deg=g_data.get("heading"),
+                course_age_seconds=(time.time() - g_data["course_update"] if g_data.get("course_update") else None),
+            )
 
-        # Campionamento filare se REC attivo (distanza minima 25 cm)
-        if is_recording and g_data["lat"] != 0.0 and g_data["lon"] != 0.0:
-            should_add = False
-            if last_recorded_lat is None:
-                should_add = True
-            else:
-                dist = calc_distance_m(last_recorded_lat, last_recorded_lon, g_data["lat"], g_data["lon"])
-                if dist >= 0.25:
-                    should_add = True
-
-            if should_add:
-                last_recorded_lat = g_data["lat"]
-                last_recorded_lon = g_data["lon"]
-                recorded_points.append({
-                    "lat": g_data["lat"],
-                    "lon": g_data["lon"],
-                    "alt": g_data["alt"],
-                    "rtk_status": g_data["rtk_status"],
-                    "timestamp": time.time()
-                })
+        # Registra una sola volta ogni nuovo GGA, normalmente a 1 Hz.
+        fix_timestamp = float(g_data.get("last_update") or 0.0)
+        now = time.time()
+        fix_age = max(0.0, now - fix_timestamp) if fix_timestamp else None
+        valid_quality = g_data.get("rtk_status") in ("FIX", "FLOAT", "DGPS", "SINGLE")
+        if (
+            is_recording
+            and g_data["lat"] != 0.0
+            and g_data["lon"] != 0.0
+            and valid_quality
+            and fix_timestamp > last_recorded_fix_timestamp
+            and fix_timestamp - last_recorded_fix_timestamp >= 0.9
+            and fix_age is not None
+            and fix_age <= 3.0
+        ):
+            rtcm_data = rtcm_client.snapshot()
+            recorded_points.append({
+                "sample_index": len(recorded_points) + 1,
+                "lat": g_data["lat"],
+                "lon": g_data["lon"],
+                "alt": g_data["alt"],
+                "rtk_status": g_data["rtk_status"],
+                "satellites": g_data.get("satellites"),
+                "fix_timestamp": fix_timestamp,
+                "fix_age_seconds": round(fix_age, 3),
+                "speed_kmh": g_data.get("speed_kmh", 0.0),
+                "course_over_ground_deg": g_data.get("heading", 0.0),
+                "imu_yaw_deg": i_data.get("yaw", 0.0),
+                "imu_pitch_deg": i_data.get("pitch", 0.0),
+                "imu_roll_deg": i_data.get("roll", 0.0),
+                "motor_last_command": last_motor_command,
+                "motor_command_age_seconds": round(max(0.0, now - last_motor_command_timestamp), 3),
+                "motor_trim_pct": motor_trim_pct,
+                "motor_left_output_pct": driver_pwr_sx,
+                "motor_right_output_pct": driver_pwr_dx,
+                "motor_left_pct": pwr_sx,
+                "motor_right_pct": pwr_dx,
+                "motor_left_us": _motor_us(driver_pwr_sx),
+                "motor_right_us": _motor_us(driver_pwr_dx),
+                "dry_run": is_dry_run,
+                "imu_age_seconds": round(max(0.0, now - i_data["last_update"]), 3) if i_data.get("last_update") else None,
+                "rtcm_connected": rtcm_data.get("connected", False),
+                "rtcm_bytes_received": rtcm_data.get("bytes_received", 0),
+                "rtcm_age_seconds": rtcm_data.get("age_seconds"),
+                "timestamp": now
+            })
+            last_recorded_fix_timestamp = fix_timestamp
 
         if not ws_clients:
             continue
 
-        us_sx = int(1500 + (pwr_sx * 5))
-        us_dx = int(1500 + (pwr_dx * 5))
+        us_sx = _motor_us(driver_pwr_sx)
+        us_dx = _motor_us(driver_pwr_dx)
 
         payload = {
             "type": "telemetry",
@@ -471,16 +715,27 @@ async def telemetry_broadcaster():
                 "yaw": i_data["yaw"]
             },
             "motors": {
+                # left/right_pct restano i comandi nominali mostrati nel front end.
                 "left_pct": pwr_sx,
                 "right_pct": pwr_dx,
+                "trim_pct": motor_trim_pct,
+                "driver_left_pct": driver_pwr_sx,
+                "driver_right_pct": driver_pwr_dx,
                 "left_us": us_sx,
                 "right_us": us_dx,
-                "dry_run": is_dry_run
+                "dry_run": is_dry_run,
+                "last_command": last_motor_command,
+                "command_age_seconds": round(max(0.0, now - last_motor_command_timestamp), 3)
             },
             "recorder": {
                 "is_recording": is_recording,
                 "can_save": has_unsaved_record,
                 "points_count": len(recorded_points)
+            },
+            "replay": {
+                "mission": replay_mission,
+                "actuation_enabled": False,
+                "preview": replay_preview,
             },
 
             # Compatibilita' per index.html
@@ -643,8 +898,11 @@ app = web.Application()
 # Rotte Pagine Web
 app.router.add_get('/', handle_index)
 app.router.add_get('/index.html', handle_index)
+app.router.add_get('/registrazioni.html', handle_registrazioni)
 app.router.add_get('/impostazioni_widgets.html', handle_widgets)
 app.router.add_get('/autopilota.html', handle_autopilota)
+app.router.add_get('/riproduzione.html', handle_riproduzione)
+app.router.add_get('/api/replay/missions', handle_replay_missions)
 app.router.add_get('/automatico.html', handle_autopilota)
 app.router.add_get('/scatter_analysis.html', handle_scatter_analysis)
 app.router.add_get('/runtime-config.js', handle_runtime_config)

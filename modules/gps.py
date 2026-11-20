@@ -31,6 +31,7 @@ class GPSReader:
             "rtk_status": "NO FIX",
             "speed_kmh": 0.0,
             "heading": 0.0,
+            "course_update": 0.0,
             "last_update": 0.0
         }
 
@@ -81,10 +82,11 @@ class GPSReader:
         parts = line.split(',')
         if len(parts) >= 9 and parts[2] == 'A':
             speed_knots = float(parts[7]) if parts[7] else 0.0
-            heading = float(parts[8]) if parts[8] else 0.0
             with self.lock:
                 self.data["speed_kmh"] = round(speed_knots * 1.852, 2)
-                self.data["heading"] = round(heading, 1)
+                if parts[8]:
+                    self.data["heading"] = round(float(parts[8]), 1)
+                    self.data["course_update"] = time.time()
 
     def _worker(self):
         while self.running:

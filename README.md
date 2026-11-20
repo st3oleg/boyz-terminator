@@ -22,6 +22,7 @@ Lascia aperto il terminale mentre usi il Rover. Per arrestare il server, premi `
 
 - Mappa: `http://terminator.local:8080` oppure `http://<IP_DEL_RASPBERRY>:8080`
 - Autopilota/teleoperazione: `http://terminator.local:8080/autopilota.html`
+- Riproduzione traccia (validazione e anteprima, senza comando motori): `http://terminator.local:8080/riproduzione.html`
 
 Sostituisci `<IP_DEL_RASPBERRY>` con l'indirizzo LAN o Tailscale effettivo. Il pulsante **Autopilota** nell'index apre `autopilota.html`.
 
@@ -40,6 +41,20 @@ BASE_LAT=45.905500 BASE_LON=12.438000 python3 /home/terminator/Documents/telemet
 ```
 
 Lo stato mostrato in mappa riflette la qualità NMEA ricevuta dal rover. `SINGLE` significa soluzione autonoma senza RTK; `FIX` richiede una soluzione RTK fixed dal ricevitore e correzioni funzionanti.
+
+## Trim e curva di calibrazione motori
+
+Il cursore **Trim differenziale** corregge una deriva costante: un valore positivo aumenta il comando del motore destro e riduce quello sinistro; un valore negativo fa l'opposto. È una correzione relativa: per esempio, a `40%` nominale e trim `+5%`, il driver riceve circa `38%` a sinistra e `42%` a destra. La media resta circa uguale. Il trim è applicato prima del driver, salvato in `motor_calibration.json` e limitato a ±20%. Sul front end restano visibili i comandi nominali (a passi del 10%); la traccia registra anche trim, percentuali inviate al driver e PWM effettivi.
+
+Durante una prova di calibrazione rettilinea, lascia trim a `0%`, disattiva dry-run, percorri tratti dritti a ogni potenza nominale e attendi almeno 2 secondi dopo ogni cambio prima di raccogliere la velocità. Registra la prova con GNSS FIX. Il logger salva un punto a ogni nuovo aggiornamento GNSS (circa 1 Hz), insieme a velocità, comando motori, stato RTK, satelliti, orientamento IMU, età dei dati e stato/età RTCM. Queste metriche sono solo diagnostiche e non modificano i comandi né il Pure Pursuit.
+
+Per estrarre il riepilogo CSV della curva misurata:
+
+```bash
+python3 /home/terminator/Documents/tools/analyze_motor_calibration.py /home/terminator/Documents/missions/<traccia_calibrazione>.json
+```
+
+Il programma calcola la velocità dallo spostamento tra posizioni GNSS consecutive e usa solo intervalli FIX con dry-run spento, trim zero, comandi uguali sui due lati e comando stabile da almeno 2 secondi. Produce velocità mediana/minima/massima per livello di potenza. È una curva diagnostica: non viene applicata automaticamente al controllo. La traccia `Fix_1.json` è stata registrata prima del salvataggio delle potenze, quindi va acquisita una nuova prova per ricavare questa curva. La guida completa è in [docs/calibrazione-motori-e-tracce.md](docs/calibrazione-motori-e-tracce.md).
 
 ## Programmi di test
 

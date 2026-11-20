@@ -1,5 +1,7 @@
 # Specifica obiettivo e piano di sviluppo
 
+**Nota stato al 19 novembre 2026:** il repository locale ora include trasporto RTCM Base→Rover via TCP (non NTRIP), geometria Pure Pursuit, simulazione Webots su `Fix_1`, registrazione GNSS circa 1 Hz con diagnostica motore e trim differenziale persistente. Questi aggiornamenti non equivalgono a una guida autonoma pronta: il controllo non è ancora collegato agli attuatori reali, la curva velocità/comando attende nuove misure e la versione integrata deve essere distribuita/verificata sul Rover. Vedere [Architettura RTK](architettura-rtk-base-rover.md), [Analisi GPS RTK](gap_analisi_risoluzione_GPSRTK.md) e [Calibrazione motori e tracce](calibrazione-motori-e-tracce.md).
+
 ## Obiettivo di prodotto
 
 Robot terrestre elettrico a guida automatica RTK per lo sfalcio controllato di erba nei campi e tra filari. La macchina deve poter percorrere una zona autorizzata, mantenere una copertura di taglio misurabile, arrestare trazione e attrezzo in caso di anomalia e consentire all'operatore di riprendere il controllo in sicurezza.
@@ -43,7 +45,7 @@ WebSocket autenticato e cifrato, comandi con autorizzazione, numero di sequenza 
 
 RTCM è il formato dei messaggi di correzione GNSS; NTRIP è un protocollo di trasporto in streaming su rete. Per ottenere RTK, una Base GNSS configurata come riferimento deve generare le correzioni e inoltrarle al ricevitore Rover. Implementare un servizio sul dispositivo Base e un client/bridge sul Rover che consegni i byte RTCM alla porta d'ingresso prevista dal ricevitore; il flusso di correzioni deve restare separato dal WebSocket della dashboard. In alternativa, se la Base usa una radio dedicata, il trasporto radio deve consegnare lo stesso flusso al Rover.
 
-Il sistema deve esporre alla telemetria almeno stato di connessione, età dell'ultima correzione, dati ricevuti e stato RTK. La modalità autonoma deve rifiutare o interrompere la missione quando le correzioni scadono o il fix non soddisfa i limiti definiti. Nell'implementazione attuale `modules/gps.py` legge NMEA da una seriale e non inoltra RTCM; il server Rover pubblica coordinate Base costanti a zero e non riceve misure GNSS della Base. Occorre verificare modello di ricevitore, interfacce seriali/radio, firmware, configurazione Base e modalità di trasporto prima di fissare i dettagli.
+Il sistema deve esporre alla telemetria almeno stato di connessione, età dell'ultima correzione, dati ricevuti e stato RTK. La modalità autonoma deve rifiutare o interrompere la missione quando le correzioni scadono o il fix non soddisfa i limiti definiti. Nel checkout locale sono presenti client RTCM/TCP e scrittura seriale coordinata sul Rover; l'inoltro TCP privato è stato provato manualmente e il ricevitore ha raggiunto FIX nel test. Non è un client NTRIP e l'integrazione completa Base/Rover resta da installare e verificare. Vedere [Analisi GPS RTK](gap_analisi_risoluzione_GPSRTK.md).
 
 ## Requisiti da definire prima del progetto dettagliato
 

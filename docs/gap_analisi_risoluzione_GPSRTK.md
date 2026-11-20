@@ -1,7 +1,7 @@
 # Analisi e verifica GPS RTK
 
 **Aggiornato:** 16 novembre 2026  
-**Scopo:** ripetere la verifica della catena Base → RTCM → Rover → ricevitore GNSS prima di sviluppare o provare la guida Pure Pursuit.
+**Scopo:** ripetere la verifica della catena Base → RTCM → Rover → ricevitore GNSS prima di collegare o provare sul veicolo la guida Pure Pursuit.
 
 ## Configurazione osservata
 
@@ -24,6 +24,12 @@ La documentazione Waveshare indica che il jumper UART va impostato nella posizio
 5. **Ricevitore Rover:** il test seriale ha mostrato porta aperta, RTCM connesso, byte scritti in aumento e correzioni fresche. La soluzione è passata da DGPS a FLOAT e poi a FIX, con 38 satelliti segnalati. Nei log inviati il FIX è rimasto presente per il campione mostrato; l'età correzioni era circa 0,1–0,7 s e non erano riportati errori.
 
 Queste prove dimostrano la ricezione di correzioni RTCM valide e un RTK FIX riportato dal ricevitore durante il test. **Non dimostrano ancora accuratezza su un punto noto, stabilità prolungata/in movimento o sicurezza per la guida autonoma.**
+
+## Traccia FIX_1 e Pure Pursuit
+
+La missione `missions/Fix_1.json` contiene 86 punti segnalati dall'utente come acquisiti tutti in `FIX`. È stata copiata in `webots/controllers/rover_bridge/missions/Fix_1.json` per una simulazione offline con GPS/IMU e motori Webots. Nella simulazione l'etichetta FIX della traccia rappresenta disponibilità di correzioni: Webots non riceve RTCM binario né parla NTRIP.
+
+La traccia precede il salvataggio delle potenze motore e quindi non è utilizzabile per stimare la curva comando/velocità. Per quella misurazione serve una nuova traccia con i campi motore, trim zero e intervalli rettilinei stabili; vedere [Calibrazione motori e dati delle tracce](calibrazione-motori-e-tracce.md). Il modulo Pure Pursuit condiviso calcola geometria, mentre il controller Webots adatta i risultati agli attuatori simulati; questa non è ancora l'integrazione hardware sul Rover. I dettagli operativi e i log della simulazione sono nel [README Webots](../../webots/README.md).
 
 ## Nota importante su NTRIP
 

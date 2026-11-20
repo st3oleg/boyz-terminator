@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Riproduzione traccia · Terminator</title>
+  <style>
+    :root{color-scheme:dark;font-family:system-ui,sans-serif;background:#0b1220;color:#e5edf8}
+    body{max-width:880px;margin:0 auto;padding:20px;line-height:1.45}
+    nav{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:24px}a{color:#7dd3fc}
+    h1{margin-bottom:4px}h2{font-size:1.12rem;margin-top:0}
+    .muted{color:#a4b2c6}.panel{background:#142033;border:1px solid #30435c;border-radius:12px;padding:18px;margin:16px 0}
+    label{display:block;margin:12px 0 5px}select,input,button{font:inherit;padding:9px;border-radius:7px}
+    select,input{background:#091523;color:#eef;border:1px solid #496078;max-width:100%}
+    button{background:#2563eb;color:white;border:0;cursor:pointer;margin:12px 8px 0 0}
+    button.secondary{background:#34465e}button:disabled{opacity:.5;cursor:not-allowed}
+    .badge{display:inline-block;border-radius:6px;padding:4px 9px;background:#374151}
+    .error{color:#fda4af}.ok{color:#86efac}dl{display:grid;grid-template-columns:max-content 1fr;gap:8px 16px}
+    dt{color:#a4b2c6}dd{margin:0;overflow-wrap:anywhere}
+  </style>
+</head>
+<body>
+  <nav><a href="index.html">Mappa</a><a href="autopilota.html">Teleoperazione</a><a href="registrazioni.html">Rilievo</a></nav>
+  <h1>Riproduzione traccia</h1>
+  <p class="muted">Preparazione e anteprima live. Questa pagina non avvia il movimento: i motori restano sotto il controllo manuale.</p>
+  <section class="panel">
+    <h2>1. Seleziona la traccia</h2>
+    <label for="mission">Missione salvata sul Rover</label>
+    <select id="mission"><option>Caricamento…</option></select>
+    <button id="refresh" class="secondary" type="button">Aggiorna elenco</button>
+    <p class="muted">Sono accettati solo punti RTK FIX, senza salti o timestamp fuori ordine.</p>
+  </section>
+  <section class="panel">
+    <h2>2. Fornisci il geofence</h2>
+    <p id="fence-status" class="muted">Cerco il poligono salvato in questo browser…</p>
+    <label for="fence-file">Oppure importa un file GeoJSON Polygon</label>
+    <input id="fence-file" type="file" accept=".json,.geojson,application/geo+json">
+    <p class="muted">La traccia deve restare interamente all’interno del poligono, con almeno 0,75 m di margine per il suo centro. Questo margine è solo un parametro iniziale di verifica, non garantisce lo spazio per l’intero robot.</p>
+    <button id="load" type="button" disabled>Valida e mostra anteprima</button>
+    <button id="unload" class="secondary" type="button">Chiudi anteprima</button>
+  </section>
+  <section class="panel" aria-live="polite">
+    <h2>Stato</h2>
+    <span id="connection" class="badge">Connessione in corso</span>
+    <p id="message" class="muted">In attesa.</p>
+    <dl>
+      <dt>Missione</dt><dd id="active-mission">—</dd>
+      <dt>Motivo blocco</dt><dd id="reason">—</dd>
+      <dt>Orientamento</dt><dd id="heading">—</dd>
+      <dt>Errore laterale</dt><dd id="cross">—</dd>
+      <dt>Distanza dal confine</dt><dd id="clearance">—</dd>
+      <dt>Distanza dalla meta</dt><dd id="goal">—</dd>
+      <dt>Curvatura richiesta</dt><dd id="curvature">—</dd>
+      <dt>Bersaglio locale</dt><dd id="target">—</dd>
+      <dt>Attuazione</dt><dd>Disabilitata: calibrazione e monitor ostacoli da integrare.</dd>
+    </dl>
+  </section>
+  <script>
+    'use strict';
+    const $ = id => document.getElementById(id);
+    let ws, fence = null;
+    function show(id, value) { $(id).textContent = value == null ? '—' : String(value); }
+    function meters(value) { return value == null ? '—' : `${Number(value).toFixed(2)} m`; }
+    function refreshReady() { $('load').disabled = !(ws?.readyState === WebSocket.OPEN && fence && $('mission').value); }
+    async function refreshMissions() {
+      try {
+        const response = await fetch('/api/replay/missions', {cache:'no-store'});
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        $('mission').replaceChildren(...data.missions.map(name => new Option(name, name)));
+        if (!data.missions.length) $('mission').append(new Option('Nessuna missione', ''));
+      } catch (error) { show('message', `Elenco missioni: ${error.message}`); }
+      refreshReady();
+    }
+    function setFence(value, source) {
+      if (!value || typeof value !== 'object') throw new Error('GeoJSON non valido');
+      fence = value;
+      show('fence-status', `Geofence pronto: ${source}. Il server ne verificherà la geometria.`);
+      refreshReady();
+    }
+    try {
+      const saved = localStorage.getItem('terminator_zones_geojson');
+      if (saved) setFence(JSON.parse(saved), 'salvato nel browser');
+      else show('fence-status', 'Nessun geofence in questo browser: importa un GeoJSON.');
+    } catch (error) { show('fence-status', `Geofence nel browser non leggibile: ${error.message}`); }
+    $('fence-file').addEventListener('change', async event => {
+      const file = event.target.files[0];
+      if (!file) return;
+      try { setFence(JSON.parse(await file.text()), file.name); }
+      catch (error) { fence = null; show('fence-status', `File non valido: ${error.message}`); refreshReady(); }
+    });
+    $('refresh').onclick = refreshMissions;
+    $('mission').onchange = refreshReady;
+    $('load').onclick = () => ws.send(JSON.stringify({type:'replay_load', filename:$('mission').value, geofence:fence}));
+    $('unload').onclick = () => { if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({type:'replay_unload'})); };
+    function connect() {
+      ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws`);
+      ws.onopen = () => { show('connection', 'Connesso'); refreshReady(); };
+      ws.onclose = () => { show('connection', 'Disconnesso'); refreshReady(); setTimeout(connect, 1500); };
+      ws.onmessage = event => {
+        let data;
+        try { data = JSON.parse(event.data); } catch { return; }
+        if (data.type === 'replay_load_result') {
+          show('message', data.detail);
+          $('message').className = data.ok ? 'ok' : 'error';
+          if (data.mission) show('active-mission', `${data.mission} · ${data.points_count} punti · ${data.length_m} m`);
+          else if (data.ok) show('active-mission', '—');
+        }
+        if (data.type === 'telemetry' && data.replay) {
+          const p = data.replay.preview;
+          if (data.replay.mission && $('active-mission').textContent === '—') show('active-mission', data.replay.mission);
+          if (!p) return;
+          show('reason', p.reason);
+          show('heading', p.heading_source);
+          show('cross', meters(p.cross_track_error_m));
+          show('clearance', meters(p.boundary_clearance_m));
+          show('goal', meters(p.goal_distance_m));
+          show('curvature', p.curvature_1pm == null ? '—' : `${p.curvature_1pm} 1/m`);
+          show('target', p.target ? `${p.target.x_east_m} m est, ${p.target.y_north_m} m nord` : '—');
+        }
+      };
+    }
+    refreshMissions(); connect();
+  </script>
+</body>
+</html>
