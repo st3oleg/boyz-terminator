@@ -98,6 +98,8 @@ La prova camera usa la stessa porta `8081` del primo stream avviato da `telemetr
 
 Con `telemetry_server.py`, la camera CSI compare nella regia di `autopilota.html` accanto alle webcam USB. Il server usa `rpicam-vid` (o `libcamera-vid`) per pubblicare il video su `http://<IP_DEL_RASPBERRY>:8080/camera/csi/stream` e la miniatura su `/camera/csi/snapshot`. Se la camera non è disponibile, la pagina ritenta la connessione. Dopo aver aggiornato il codice sul Raspberry, riavvia `telemetry_server.py`.
 
+Per vedere una sola camera con il ping del robot apri `http://<IP_DEL_RASPBERRY>:8080/camera/usb1`, `/camera/usb2` o `/camera/csi`. Il valore mostrato è il tempo di andata e ritorno di una piccola richiesta HTTP tra browser e server, non il ritardo dei fotogrammi. Gli indirizzi `/stream` sulle porte `8081` e `8082` restano flussi MJPEG per applicazioni video e non possono mostrare un indicatore HTML.
+
 Il controllo **Immagine** delle due EMEET offre cinque livelli: Notturno+, Notturno, Bilanciato, Diurno e Sole forte. I due livelli estremi richiedono più esposizione/gain o meno esposizione rispetto ai tre preset precedenti. Il server legge i limiti V4L2 di ciascuna webcam e adatta i valori richiesti; il messaggio sotto al cursore mostra quelli realmente applicati. Un'immagine CSI fortemente rosa alla luce diurna può indicare una camera NoIR senza filtro infrarosso: in quel caso serve un filtro IR-cut per colori fedeli.
 
 ## Riferimento ai file

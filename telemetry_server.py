@@ -236,6 +236,17 @@ async def handle_csi_snapshot(request):
     return web.Response(body=frame, content_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
+async def handle_camera_view(request):
+    file_path = os.path.join(STATIC_DIR, "camera_view.html")
+    if os.path.exists(file_path):
+        return web.FileResponse(file_path)
+    return web.Response(text="File static/camera_view.html non trovato!", status=404)
+
+
+async def handle_camera_ping(request):
+    return web.json_response({"ok": True}, headers={"Cache-Control": "no-store"})
+
+
 async def handle_csi_stream(request):
     if csi_camera.latest()[1] is None:
         return web.Response(text="Camera CSI non disponibile", status=503)
@@ -1040,6 +1051,10 @@ app.router.add_get('/riproduzione.html', handle_riproduzione)
 app.router.add_get('/riproduzione.js', handle_riproduzione_js)
 app.router.add_get('/api/replay/missions', handle_replay_missions)
 app.router.add_get('/automatico.html', handle_autopilota)
+app.router.add_get('/camera/usb1', handle_camera_view)
+app.router.add_get('/camera/usb2', handle_camera_view)
+app.router.add_get('/camera/csi', handle_camera_view)
+app.router.add_get('/camera/ping', handle_camera_ping)
 app.router.add_get('/camera/csi/stream', handle_csi_stream)
 app.router.add_get('/camera/csi/snapshot', handle_csi_snapshot)
 app.router.add_get('/scatter_analysis.html', handle_scatter_analysis)
@@ -1063,6 +1078,9 @@ if __name__ == '__main__':
     print("   👉 Video Stream USB 1: http://100.73.187.83:8081/stream")
     print("   👉 Video Stream USB 2: http://100.73.187.83:8082/stream")
     print("   👉 Video Stream CSI:   http://100.73.187.83:8080/camera/csi/stream")
+    print("   👉 Video + Ping USB 1: http://100.73.187.83:8080/camera/usb1")
+    print("   👉 Video + Ping USB 2: http://100.73.187.83:8080/camera/usb2")
+    print("   👉 Video + Ping CSI:   http://100.73.187.83:8080/camera/csi")
     print("   👉 Watchdog:     1.0s Fail-Safe")
     print("=" * 60 + "\n")
     web.run_app(app, host='0.0.0.0', port=8080)
