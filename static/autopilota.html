@@ -765,10 +765,12 @@
             if (e.repeat) return;
             const key = e.key.toLowerCase();
             const active = document.activeElement;
-            if (active && active.tagName === 'INPUT') {
-                if (['w', 'a', 's', 'd', '1', '2', ' '].includes(key)) active.blur();
-                else return;
-            }
+            // Non inviare comandi di guida mentre l'utente scrive o interagisce
+            // con un controllo della pagina (input, textarea, select o editor).
+            if (active && (
+                active.isContentEditable ||
+                ['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName)
+            )) return;
 
             if (key === 'w' || key === 'arrowup') { e.preventDefault(); sendMotorCmd('w'); }
             else if (key === 's' || key === 'arrowdown') { e.preventDefault(); sendMotorCmd('s'); }
