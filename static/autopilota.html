@@ -111,7 +111,7 @@
         <div id="video-placeholder" class="text-center p-6 flex flex-col items-center gap-2">
             <span class="text-4xl animate-pulse">🤖</span>
             <div class="font-bold text-slate-300 text-sm">POSTAZIONE TERMINATOR FPV</div>
-            <p class="text-xs text-slate-500 font-mono">Connessione video in corso su porta 8081...</p>
+            <p class="text-xs text-slate-500 font-mono">Connessione video in corso...</p>
         </div>
     </div>
 
@@ -395,11 +395,21 @@
     <script>
         const CAMS = {
             "usb1": { nome: "EMEET C960 (USB 1)", port: 8081 },
-            "usb2": { nome: "EMEET C960 (USB 2)", port: 8082 }
+            "usb2": { nome: "EMEET C960 (USB 2)", port: 8082 },
+            "csi": { nome: "Presa Diretta CSI" }
         };
         const CAMERA_PRESET_KEYS = ["night", "balanced", "daylight"];
         const CAMERA_PRESET_LABELS = ["Notturno", "Bilanciato", "Diurno"];
-        const CAMERA_HOST = new URLSearchParams(window.location.search).get('cameraHost') || '100.73.187.83';
+        const cameraHostOverride = new URLSearchParams(window.location.search).get('cameraHost');
+        const CAMERA_HOST = cameraHostOverride || window.location.hostname;
+
+        function cameraUrl(key, endpoint) {
+            if (key === 'csi') {
+                const origin = cameraHostOverride ? `http://${CAMERA_HOST}:8080` : '';
+                return `${origin}/camera/csi/${endpoint}`;
+            }
+            return `http://${CAMERA_HOST}:${CAMS[key].port}/${endpoint}`;
+        }
 
         let currentMainCam = "usb1";
         let currentCameraPreset = localStorage.getItem('terminator-camera-preset') || 'balanced';
@@ -480,7 +490,7 @@
         function initVideoStream() {
             const fpvVideo = document.getElementById('fpv-video');
             const placeholder = document.getElementById('video-placeholder');
-            fpvVideo.src = `http://${CAMERA_HOST}:${CAMS[currentMainCam].port}/stream`;
+            fpvVideo.src = `${cameraUrl(currentMainCam, 'stream')}?t=${Date.now()}`;
             fpvVideo.classList.remove('hidden');
             if (placeholder) placeholder.classList.add('hidden');
         }
@@ -491,9 +501,7 @@
             fpvVideo.classList.add('hidden');
             if (placeholder) placeholder.classList.remove('hidden');
             setTimeout(() => {
-                fpvVideo.src = `http://${CAMERA_HOST}:${CAMS[currentMainCam].port}/stream?t=${Date.now()}`;
-                fpvVideo.classList.remove('hidden');
-                if (placeholder) placeholder.classList.add('hidden');
+                initVideoStream();
             }, 2500);
         }
 
@@ -918,7 +926,7 @@
                     card.onclick = () => switchCamera(key);
                     card.innerHTML = `
                         <div class="w-full h-20 bg-black rounded-lg overflow-hidden relative">
-                            <img id="thumb-${key}" src="http://${CAMERA_HOST}:${CAMS[key].port}/snapshot" class="w-full h-full object-cover" onerror="this.src=''; this.alt='NO SIGNAL';">
+                            <img id="thumb-${key}" src="${cameraUrl(key, 'snapshot')}" class="w-full h-full object-cover" alt="${CAMS[key].nome}">
                             <div class="absolute inset-0 bg-sky-600/30 opacity-0 hover:opacity-100 flex items-center justify-center font-bold text-[9px] text-white">PRIMO PIANO ↗</div>
                         </div>
                         <span class="text-[9px] font-bold text-slate-300 px-1 truncate">${CAMS[key].nome}</span>
@@ -930,7 +938,9 @@
 
         async function switchCamera(camKey) {
             currentMainCam = camKey;
-            document.getElementById('fpv-video').src = `http://${CAMERA_HOST}:${CAMS[camKey].port}/stream?t=${Date.now()}`;
+            document.getElementById('fpv-video').classList.add('hidden');
+            document.getElementById('video-placeholder').classList.remove('hidden');
+            initVideoStream();
             renderCamsSidebar();
         }
 
@@ -946,7 +956,7 @@
             Object.keys(CAMS).forEach(key => {
                 if (key !== currentMainCam) {
                     const el = document.getElementById(`thumb-${key}`);
-                    if (el) el.src = `http://${CAMERA_HOST}:${CAMS[key].port}/snapshot?t=${Date.now()}`;
+                    if (el) el.src = `${cameraUrl(key, 'snapshot')}?t=${Date.now()}`;
                 }
             });
         }, 1500);

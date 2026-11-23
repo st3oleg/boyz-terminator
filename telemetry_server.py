@@ -2,7 +2,7 @@
 """
 Telemetry & Control Server - Terminator Rover
 - Hub centralizzato hardware: GPS (/dev/ttyS0), IMU (/dev/ttyAMA4), Motori MDDS30 (GPIO 23/19)
-- Streaming video ustreamer autopilota su porte 8081/8082 con rilevamento webcam USB (/dev/v4l/by-id)
+- Streaming video USB su porte 8081/8082 e CSI su /camera/csi/stream
 - Logica di trazione progressiva: START_PCT 20%, STEP_PCT 10%
 - Watchdog di sicurezza a 1.0 secondo per arresto motori
 - Registrazione tracce GPS su /home/terminator/Documents/missions/
@@ -35,6 +35,7 @@ from modules.imu import IMUReader
 from modules.motor import MotorDriver
 from modules.route_replay import RouteReplay, load_mission, list_mission_history
 from modules.geofence_store import save_geofence, load_geofence, list_geofences, normalize_geofence
+from modules.csi_camera import CSICamera
 
 # Inizializzazione Hardware
 gps = GPSReader(port="/dev/ttyS0", baudrate=115200)
@@ -42,6 +43,7 @@ imu = IMUReader(port="/dev/ttyAMA4", baudrate=115200)
 motors = None
 video_processes = {}
 usb_camera_devices = []
+csi_camera = CSICamera()
 
 # Valori iniziali per le EMEET C960 UVC; bilanciato corrisponde al settaggio
 # già provato dall'utente (8 ms, gain 0). Night/day sono preset regolabili.
@@ -212,12 +214,63 @@ def rileva_webcam_usb():
         if os.path.exists(reale) and reale not in devices:
             devices.append(reale)
 
-    # Fallback per sistemi senza link stabili /dev/v4l/by-id.
+    # Fallback: solo nodi USB di acquisizione. La CSI espone anche nodi V4L2.
+    if not devices:
+        for path in sorted(glob.glob("/dev/v4l/by-path/*usb*index0*")):
+            device = os.path.realpath(path)
+            if os.path.exists(device) and device not in devices:
+                devices.append(device)
     if not devices:
         for dev in sorted(glob.glob("/dev/video[0-9]*")):
-            if os.path.exists(dev) and dev not in devices:
+            sysfs_device = os.path.realpath(
+                f"/sys/class/video4linux/{os.path.basename(dev)}/device"
+            )
+            index_path = f"/sys/class/video4linux/{os.path.basename(dev)}/index"
+            try:
+                with open(index_path, encoding="ascii") as index_file:
+                    is_capture_node = index_file.read().strip() == "0"
+            except OSError:
+                is_capture_node = False
+            if is_capture_node and "/usb" in sysfs_device and os.path.exists(dev) and dev not in devices:
                 devices.append(dev)
     return devices[:2]
+
+
+async def handle_csi_snapshot(request):
+    _, frame = csi_camera.latest()
+    if frame is None:
+        return web.Response(text="Camera CSI non disponibile", status=503)
+    return web.Response(body=frame, content_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+async def handle_csi_stream(request):
+    if csi_camera.latest()[1] is None:
+        return web.Response(text="Camera CSI non disponibile", status=503)
+    response = web.StreamResponse(
+        headers={
+            "Content-Type": "multipart/x-mixed-replace; boundary=frame",
+            "Cache-Control": "no-store",
+        }
+    )
+    await response.prepare(request)
+    last_sequence = -1
+    last_frame_time = time.monotonic()
+    try:
+        while True:
+            sequence, frame = csi_camera.latest()
+            if frame is not None and sequence != last_sequence:
+                last_sequence = sequence
+                last_frame_time = time.monotonic()
+                await response.write(
+                    b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: "
+                    + str(len(frame)).encode("ascii") + b"\r\n\r\n" + frame + b"\r\n"
+                )
+            elif time.monotonic() - last_frame_time > 3:
+                break
+            await asyncio.sleep(0.07)
+    except (ConnectionResetError, BrokenPipeError, asyncio.CancelledError):
+        pass
+    return response
 
 
 def apply_camera_image_preset(preset: str, devices=None) -> dict:
@@ -902,6 +955,8 @@ async def on_startup(app):
         print(f"[WARN] Impossibile avviare ustreamer: {e}")
         video_processes = {}
 
+    csi_camera.start()
+
     # 2. Inizializzazione Driver Motori MDDS30
     try:
         motors = MotorDriver()
@@ -940,6 +995,8 @@ async def on_cleanup(app):
             process.kill()
     video_processes = {}
 
+    await asyncio.to_thread(csi_camera.stop)
+
     gps.stop()
     imu.stop()
     await app["base_http_session"].close()
@@ -961,6 +1018,8 @@ app.router.add_get('/riproduzione.html', handle_riproduzione)
 app.router.add_get('/riproduzione.js', handle_riproduzione_js)
 app.router.add_get('/api/replay/missions', handle_replay_missions)
 app.router.add_get('/automatico.html', handle_autopilota)
+app.router.add_get('/camera/csi/stream', handle_csi_stream)
+app.router.add_get('/camera/csi/snapshot', handle_csi_snapshot)
 app.router.add_get('/scatter_analysis.html', handle_scatter_analysis)
 app.router.add_get('/runtime-config.js', handle_runtime_config)
 
@@ -981,6 +1040,7 @@ if __name__ == '__main__':
     print("   👉 Autopilota:   http://100.73.187.83:8080/autopilota.html")
     print("   👉 Video Stream USB 1: http://100.73.187.83:8081/stream")
     print("   👉 Video Stream USB 2: http://100.73.187.83:8082/stream")
+    print("   👉 Video Stream CSI:   http://100.73.187.83:8080/camera/csi/stream")
     print("   👉 Watchdog:     1.0s Fail-Safe")
     print("=" * 60 + "\n")
     web.run_app(app, host='0.0.0.0', port=8080)

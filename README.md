@@ -96,11 +96,13 @@ La regia di prova è sulla porta `8081` e avvia le camere USB e CSI quando le ri
 
 La prova camera usa la stessa porta `8081` del primo stream avviato da `telemetry_server.py`; non eseguire i due programmi contemporaneamente. Termina la prova con `Ctrl+C`.
 
+Con `telemetry_server.py`, la camera CSI compare nella regia di `autopilota.html` accanto alle webcam USB. Il server usa `rpicam-vid` (o `libcamera-vid`) per pubblicare il video su `http://<IP_DEL_RASPBERRY>:8080/camera/csi/stream` e la miniatura su `/camera/csi/snapshot`. Se la camera non è disponibile, la pagina ritenta la connessione. Dopo aver aggiornato il codice sul Raspberry, riavvia `telemetry_server.py`.
+
 ## Riferimento ai file
 
 | Script | Funzione | Porta/interfaccia |
 |---|---|---|
-| `telemetry_server.py` | Telemetria, mappa, teleoperazione e stream video del Rover | HTTP `8080`, video `8081` e `8082`, WebSocket `/ws` |
+| `telemetry_server.py` | Telemetria, mappa, teleoperazione e stream video del Rover | HTTP `8080` (anche CSI), USB `8081` e `8082`, WebSocket `/ws` |
 | `tests/test_lidar.py` | Acquisizione LiDAR e visualizzazione mappa 2D | Seriale `/dev/ttyUSB0` a `230400`; pagina `8085` |
 | `tests/test_motori.py` | Comando diretto dei motori Cytron | GPIO; tastiera del terminale |
 | `tests/test_camera.py` | Prova/regia delle videocamere | Pagina `8081`; stream USB interni `8082` e `8083` |
