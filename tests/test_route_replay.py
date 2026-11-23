@@ -1,10 +1,15 @@
 """Hardware-free checks for route validation and replay stop conditions."""
 
 import json
+import math
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
+from modules.follow_route import RoverFollower, RouteStop, supervise
+from modules.pure_pursuit import EARTH_RADIUS_M
 from modules.route_replay import MotorCalibration, RouteReplay, list_mission_history, load_mission
 
 
@@ -120,6 +125,81 @@ class RouteReplayTests(unittest.TestCase):
             self.assertEqual(history["old.json"]["motor_samples"], 0)
             self.assertEqual(history["new.json"]["motor_samples"], 1)
             self.assertIn("error", history["bad.json"])
+
+
+class ActuationTests(unittest.TestCase):
+    def setUp(self):
+        recorded = mission()
+        recorded["points"].append({"lat": ORIGIN_LAT + 0.000009,
+                                   "lon": ORIGIN_LON + 0.000078,
+                                   "rtk_status": "FIX", "timestamp": 3})
+        self.route = RouteReplay(recorded, fence())
+        self.profile = {
+            "wheels_verified": True, "physical_estop_verified": True,
+            "imu_yaw_sign": 1, "cruise_mps": 0.35, "max_speed_mps": 0.65,
+            "clearance_m": 1.0,
+            "motor_calibration": {"track_width_m": 0.65, "max_pct": 50,
+                                  "left_curve": [[0, 0], [1, 50]],
+                                  "right_curve": [[0, 0], [1, 50]]},
+        }
+
+    def drive(self, expected_stop, *, fault=None):
+        tick = start = 10.0
+        x = y = yaw = 0.0
+        commands = []
+        output = (0, 0)
+        events = []
+
+        def set_motors(left, right):
+            nonlocal output
+            output = (left, right)
+            commands.append(output)
+
+        def pose():
+            lat = ORIGIN_LAT + math.degrees(y / EARTH_RADIUS_M)
+            mean_lat = (lat + ORIGIN_LAT) / 2
+            lon = ORIGIN_LON + math.degrees(x / (EARTH_RADIUS_M * math.cos(math.radians(mean_lat))))
+            gps = {"lat": lat, "lon": lon, "last_update": tick,
+                   "rtk_status": "FLOAT" if fault == "fix" and tick > start + 1 else "FIX"}
+            imu = {"yaw": math.degrees(yaw), "last_update": tick}
+            return gps, imu, {"connected": True, "age_seconds": 0.1}, tick
+
+        def keys():
+            return b"" if fault == "presence" and tick > start + 1 else b" "
+
+        async def advance(dt):
+            nonlocal tick, x, y, yaw
+            left, right = (pct / 50 for pct in output)
+            distance = (left + right) * dt / 2
+            turn = (right - left) * dt / 0.65
+            x += distance * math.cos(yaw + turn / 2)
+            y += distance * math.sin(yaw + turn / 2)
+            yaw += turn
+            tick += dt
+
+        driver = SimpleNamespace(set_motors=set_motors, stop=lambda: set_motors(0, 0))
+        with patch("modules.follow_route.asyncio", SimpleNamespace(sleep=advance)):
+            with self.assertRaisesRegex(RouteStop, expected_stop):
+                run = supervise(RoverFollower(self.route, self.profile), driver, pose, keys,
+                                log=events.append, clock=lambda: tick)
+                run.send(None)
+        self.assertEqual(output, (0, 0))
+        self.assertTrue(any(l > 0 and r > 0 for l, r in commands))
+        self.assertTrue(all(0 <= l <= 50 and 0 <= r <= 50 for l, r in commands))
+        self.assertEqual(len(commands), len(events) + 1)
+        return commands
+
+    def test_route_steers_and_stops_at_goal(self):
+        commands = self.drive("Meta raggiunta")
+        self.assertTrue(any(l != r for l, r in commands))
+
+    def test_loss_of_fix_or_operator_hold_stops_motion(self):
+        self.drive("RTK FIX assente", fault="fix")
+        self.drive("Comando di presenza operatore scaduto", fault="presence")
+
+    def test_broken_wheels_cannot_arm(self):
+        with self.assertRaisesRegex(ValueError, "ruote"):
+            RoverFollower(self.route, self.profile | {"wheels_verified": False})
 
 
 if __name__ == "__main__":

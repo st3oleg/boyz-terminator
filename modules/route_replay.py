@@ -131,15 +131,23 @@ class RouteReplay:
         distance = min(_distance_to_segment(point, a, b) for a, b in zip(self.polygon, self.polygon[1:]))
         return distance if _inside(point, self.polygon) else -distance
 
-    def preview(self, *, lat, lon, rtk_status, fix_timestamp, now, imu_yaw_deg=None,
+    def preview(self, *, obstacle_clear=False, **pose):
+        result = self.guidance(**pose)
+        result["obstacle_clear"] = bool(obstacle_clear)
+        if result["ready"]:
+            result["ready"] = bool(obstacle_clear)
+            result["reason"] = ("Geometria e sensori validi; attuazione non abilitata"
+                                if obstacle_clear else "Monitor ostacoli non disponibile")
+        return result
+
+    def guidance(self, *, lat, lon, rtk_status, fix_timestamp, now, imu_yaw_deg=None,
                 imu_age_seconds=None, imu_yaw_sign=None, imu_yaw_offset_deg=None,
-                rtcm_age_seconds=None, rtcm_connected=False, obstacle_clear=False,
+                rtcm_age_seconds=None, rtcm_connected=False,
                 speed_kmh=None, course_over_ground_deg=None, course_age_seconds=None):
-        """Return a diagnostic target; never a motor command."""
+        """Calculate the target after checking the pose and the route geometry."""
         result = {"ready": False, "reason": "", "target": None, "curvature_1pm": None,
                   "cross_track_error_m": None, "boundary_clearance_m": None,
-                  "goal_distance_m": None, "obstacle_clear": bool(obstacle_clear),
-                  "heading_source": None}
+                  "goal_distance_m": None, "heading_source": None}
         if rtk_status != "FIX":
             result["reason"] = "RTK FIX assente"
             return result
@@ -199,11 +207,8 @@ class RouteReplay:
             return result
         result["target"] = {"x_east_m": round(target[0], 3), "y_north_m": round(target[1], 3)}
         result["curvature_1pm"] = round(curvature, 5)
-        if not obstacle_clear:
-            result["reason"] = "Monitor ostacoli non disponibile"
-            return result
         result["ready"] = True
-        result["reason"] = "Geometria e sensori validi; attuazione non abilitata"
+        result["reason"] = "Geometria e sensori validi"
         return result
 
 

@@ -1,6 +1,6 @@
 # Riproduzione traccia: stato e criteri di abilitazione
 
-**Aggiornato il 23 novembre 2026.** Registrazione manuale e copia dei JSON dal Rover al PC confermate. Nel codice locale la riproduzione resta un'anteprima. L'attuazione autonoma sul Rover fisico deve ancora essere implementata e verificata.
+**Aggiornato il 23 novembre 2026.** Registrazione manuale e copia dei JSON dal Rover al PC confermate. La pagina web resta un'anteprima. Il controllore sperimentale da terminale è disponibile nel codice locale e attende la verifica sul Rover fisico.
 
 La pagina `riproduzione.html` è separata da `autopilota.html`, che resta la postazione di teleoperazione e registrazione. La pagina nuova elenca le missioni sul Rover, legge il geofence selezionato in `index.html` nello stesso browser e indirizzo, chiede al server di validare la traccia e mostra l'anteprima live. In `index.html` un clic sul poligono lo seleziona e lo evidenzia in arancione; se esiste una sola area, viene selezionata automaticamente. La selezione viene salvata insieme ai poligoni nel browser. Se cambia durante l'anteprima, occorre validare nuovamente la traccia. Non è una configurazione geofence persistita sul Rover. La pagina non contiene un comando di partenza. I motori non ricevono comandi dalla funzione di riproduzione.
 
@@ -45,17 +45,23 @@ Il loop del server aggiorna l'anteprima a 5 Hz. Rifiuta posizione senza FIX o pi
 2. Calibrare il verso e l'offset della IMU e verificare la coerenza GNSS/IMU, specialmente a bassa velocità e all'avvio. Il GNSS a 1 Hz e il course over ground da soli non danno un heading affidabile da fermo.
 3. Installare un monitor ostacoli sul Rover che produca una misura fresca e verificata. Al momento i prototipi LiDAR/camera non alimentano il controllo: il gate ostacoli resta intenzionalmente chiuso.
 4. Portare il geofence verificato in una configurazione locale del Rover, validare poligono, margini, ingombro e distanza di arresto, e bloccare il movimento se manca. La copia inviata dal browser serve solo per l'anteprima.
-5. Collegare la funzione di controllo agli attuatori con priorità assoluta a stop manuale, perdita di dati, geofence, ostacoli e watchdog. Registrare ogni comando e causa di arresto. Aggiungere un arresto indipendente dal processo Python per la sicurezza fisica.
+5. Verificare l'integrazione del controllore da terminale con gli attuatori reali, le cause di stop registrate e l'arresto fisico indipendente da Python.
 6. Verificare con test progressivi: simulazione, ruote sollevate, area libera con apparato di taglio disconnesso, poi prove ripetute con metriche di errore laterale e distanza di arresto. Il semplice arrivo alla meta non misura affidabilità né sicurezza.
 
 I limiti numerici dell'anteprima sono valori iniziali conservativi per individuare dati incoerenti: non sono ancora soglie validate per questo telaio o questo vigneto.
 
 ## Prima prova di Pure Pursuit
 
-Webots e l'anteprima del Rover condividono `modules/pure_pursuit.py`, che calcola il punto da inseguire e la curvatura. Webots imposta le velocità delle ruote simulate. Sul Raspberry resta da collegare la curvatura ai comandi PWM tramite la calibrazione del telaio e il controllo degli arresti.
+Webots, l'anteprima del Rover e il controllore da terminale condividono `modules/pure_pursuit.py`, che calcola il punto da inseguire e la curvatura. Il controllore carica la sola andata `avantiDritto1_sola_andata_1795443165.json` e `GeofenceTOTALEprove.geojson` dai file a bordo. Converte la curvatura in PWM usando la calibrazione per lato e passa i comandi a `MotorDriver`.
 
 Per provare la geometria in simulazione si può usare la sola andata della traccia a trim zero. Il controllore cercherà di seguire la curva registrata. Per il primo test di marcia rettilinea sul Rover, dopo la sostituzione delle ruote e le verifiche sopra, usare una retta di riferimento tra due punti e una sola andata a bassa velocità. Partire allineati alla retta e misurare errore laterale e arresto. Tenere separata la retromarcia per evitare di confondere direzione di spostamento e orientamento del muso all'inversione.
 
-La simulazione e l'anteprima sono disponibili durante il lavoro sulle ruote. Per il futuro collaudo in piazzale l'operatore si occuperà di allineare il Rover alla partenza, sorvegliare l'area e intervenire sull'arresto di emergenza. L'allineamento aiuta la partenza. Durante il percorso, il controllore ha comunque bisogno di una stima aggiornata dell'orientamento. Un'eventuale inizializzazione dello yaw sulla direzione della retta richiede ancora implementazione e verifica.
+La simulazione e l'anteprima sono disponibili durante il lavoro sulle ruote. Per il collaudo in piazzale l'operatore allinea il Rover alla partenza e sorveglia l'area. Alla partenza il controllore usa la direzione iniziale della traccia e aggiorna lo yaw dalle variazioni IMU. Confronta la direzione GNSS quando la velocità e la freschezza del dato lo consentono.
 
-Il monitor ostacoli a bordo è attualmente indisponibile. La sorveglianza dell'operatore è una misura del collaudo. Il software conserva il blocco esistente e, prima dell'attuazione automatica, vanno definiti e verificati l'uso in piazzale e gli arresti a bordo per perdita di dati, errore laterale, geofence e guasti. Verificare anche che l'arresto di emergenza possa fermare la trazione indipendentemente dal browser, dalla rete e da Python.
+Il monitor ostacoli a bordo è attualmente indisponibile. Il controllore da terminale è destinato al collaudo con presenza continua dell'operatore e arresto fisico indipendente funzionante. L'anteprima web conserva il suo blocco. Il programma da terminale termina e porta i comandi a zero quando l'operatore rilascia Spazio, preme Q o quando un controllo fallisce. Un blocco del processo Python richiede l'intervento dell'arresto fisico.
+
+### Controllore locale sul Raspberry
+
+`python3 -m modules.follow_route` valida traccia e geofence dalla radice del progetto senza inizializzare l'hardware. Per l'esecuzione supervisionata il parametro `--profile` richiede un JSON locale con i valori misurati di `imu_yaw_sign`, `cruise_mps`, `max_speed_mps`, `clearance_m` e `motor_calibration` (`track_width_m`, `left_curve`, `right_curve`, `max_pct`, `ramp_pct_per_s`). Le curve SX e DX contengono coppie `[m/s, percentuale PWM]` a partire da `[0, 0]`. Il limite è 50% per lato. Il profilo richiede inoltre le conferme `wheels_verified` e `physical_estop_verified`. Non usare le misure ottenute con i copertoni che slittano sul cerchione.
+
+Prima di un collaudo con l'hardware funzionante, fermare il servizio di teleoperazione perché il controllore usa direttamente GPS, IMU e GPIO. Configurare `BASE_TAILSCALE_HOST` come per il server, usare un terminale supervisionato e indicare un file nuovo per `--log` a ogni esecuzione. Il log JSONL contiene curvatura, permessi di posa, PWM SX/DX e causa di arresto. La configurazione di trazione misurata per il Rover non è ancora disponibile.
