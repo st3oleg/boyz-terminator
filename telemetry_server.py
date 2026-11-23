@@ -36,6 +36,7 @@ from modules.motor import MotorDriver
 from modules.route_replay import RouteReplay, load_mission, list_mission_history
 from modules.geofence_store import save_geofence, load_geofence, list_geofences, normalize_geofence
 from modules.csi_camera import CSICamera
+from modules.camera_presets import CAMERA_IMAGE_PRESETS, fit_control_to_range, current_control_value
 
 # Inizializzazione Hardware
 gps = GPSReader(port="/dev/ttyS0", baudrate=115200)
@@ -44,14 +45,6 @@ motors = None
 video_processes = {}
 usb_camera_devices = []
 csi_camera = CSICamera()
-
-# Valori iniziali per le EMEET C960 UVC; bilanciato corrisponde al settaggio
-# già provato dall'utente (8 ms, gain 0). Night/day sono preset regolabili.
-CAMERA_IMAGE_PRESETS = {
-    "night": {"exposure": 250, "gain": 15, "label": "Notturno"},
-    "balanced": {"exposure": 80, "gain": 0, "label": "Bilanciato"},
-    "daylight": {"exposure": 40, "gain": 0, "label": "Diurno"},
-}
 
 BASE_TAILSCALE_HOST = os.environ.get("BASE_TAILSCALE_HOST", "").strip()
 BASE_RTCM_PORT = int(os.environ.get("BASE_RTCM_PORT", "5000"))
@@ -289,13 +282,25 @@ def apply_camera_image_preset(preset: str, devices=None) -> dict:
 
     errors = []
     applied = 0
-    controls = (
-        "auto_exposure=1,"
-        f"exposure_time_absolute={settings['exposure']},"
-        f"gain={settings['gain']},backlight_compensation=0"
-    )
-    for device in camera_devices[:2]:
+    applied_values = []
+    for index, device in enumerate(camera_devices[:2], start=1):
         try:
+            limits = subprocess.run(
+                [v4l2_ctl, f"--device={device}", "--list-ctrls"],
+                capture_output=True, text=True, timeout=4, check=False,
+            )
+            if limits.returncode != 0:
+                errors.append(f"{device}: {(limits.stderr or limits.stdout).strip()}")
+                continue
+            exposure = fit_control_to_range(
+                limits.stdout, "exposure_time_absolute", settings["exposure"]
+            )
+            gain = fit_control_to_range(limits.stdout, "gain", settings["gain"])
+            controls = (
+                "auto_exposure=1,"
+                f"exposure_time_absolute={exposure},"
+                f"gain={gain},backlight_compensation=0"
+            )
             result = subprocess.run(
                 [v4l2_ctl, f"--device={device}", f"--set-ctrl={controls}"],
                 capture_output=True,
@@ -305,6 +310,20 @@ def apply_camera_image_preset(preset: str, devices=None) -> dict:
             )
             if result.returncode == 0:
                 applied += 1
+                try:
+                    actual = subprocess.run(
+                        [v4l2_ctl, f"--device={device}",
+                         "--get-ctrl=exposure_time_absolute,gain"],
+                        capture_output=True, text=True, timeout=4, check=False,
+                    )
+                    actual_exposure = current_control_value(actual.stdout, "exposure_time_absolute")
+                    actual_gain = current_control_value(actual.stdout, "gain")
+                except (OSError, subprocess.TimeoutExpired):
+                    actual_exposure = actual_gain = None
+                if actual_exposure is not None and actual_gain is not None:
+                    applied_values.append(f"USB {index}: exp {actual_exposure}, gain {actual_gain}")
+                else:
+                    applied_values.append(f"USB {index}: exp {exposure}, gain {gain} (lettura non disponibile)")
             else:
                 errors.append(f"{device}: {(result.stderr or result.stdout).strip()}")
         except (OSError, subprocess.TimeoutExpired) as exc:
@@ -315,7 +334,10 @@ def apply_camera_image_preset(preset: str, devices=None) -> dict:
         "preset": preset,
         "label": settings["label"],
         "applied": applied,
-        "detail": "; ".join(errors) if errors else f"Preset {settings['label']} applicato a {applied} webcam.",
+        "detail": (
+            "; ".join(errors) if errors else
+            f"Preset {settings['label']} applicato a {applied} webcam: " + "; ".join(applied_values)
+        ),
     }
 
 

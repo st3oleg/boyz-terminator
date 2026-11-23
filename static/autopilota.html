@@ -314,11 +314,11 @@
                 <label for="camera-preset-slider" class="font-bold">IMMAGINE</label>
                 <span id="camera-preset-label" class="text-amber-300">Bilanciato</span>
             </div>
-            <input id="camera-preset-slider" type="range" min="0" max="2" step="1" value="1"
+            <input id="camera-preset-slider" type="range" min="0" max="4" step="1" value="2"
                 class="w-full h-1.5 mt-2 accent-sky-500 cursor-pointer"
                 aria-label="Preset immagine videocamere">
             <div class="flex justify-between text-[8px] text-slate-400 mt-1">
-                <span>NOTTURNO</span><span>BILANCIATO</span><span>DIURNO</span>
+                <span>N+</span><span>NOTTE</span><span>BIL.</span><span>GIORNO</span><span>SOLE</span>
             </div>
             <div id="camera-preset-status" class="text-slate-500 text-[8px] mt-1 text-right">Entrambe le webcam</div>
         </div>
@@ -398,8 +398,8 @@
             "usb2": { nome: "EMEET C960 (USB 2)", port: 8082 },
             "csi": { nome: "Presa Diretta CSI" }
         };
-        const CAMERA_PRESET_KEYS = ["night", "balanced", "daylight"];
-        const CAMERA_PRESET_LABELS = ["Notturno", "Bilanciato", "Diurno"];
+        const CAMERA_PRESET_KEYS = ["night_plus", "night", "balanced", "daylight", "sunlight"];
+        const CAMERA_PRESET_LABELS = ["Notturno+", "Notturno", "Bilanciato", "Diurno", "Sole forte"];
         const cameraHostOverride = new URLSearchParams(window.location.search).get('cameraHost');
         const CAMERA_HOST = cameraHostOverride || window.location.hostname;
 
