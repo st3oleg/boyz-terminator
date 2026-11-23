@@ -104,6 +104,8 @@ Il controllo **Immagine** delle due EMEET offre cinque livelli: Notturno+, Nottu
 
 In Autopilota l'indicatore **PING** mostra sempre l'età della telemetria WebSocket (`ora del browser - timestamp inviato dal robot`); non è l'RTT HTTP delle pagine camera. Le miniature si aggiornano ogni 5 secondi; lo stream CSI è limitato a 960×540 e 10 fps per ridurre il traffico. I vecchi pulsanti FPS non modificavano lo stream e sono stati rimossi.
 
+Per le verifiche di latenza, l'avvio lento della CSI, i limiti dei preset e i comandi Git discussi, consulta [docs/video-telemetria-e-rete.md](docs/video-telemetria-e-rete.md).
+
 ## Riferimento ai file
 
 | Script | Funzione | Porta/interfaccia |

@@ -1,7 +1,16 @@
 # Architettura RTK Base / Rover
 
-**Stato:** flusso RTCM e RTK FIX verificati sul banco/campo con test manuale; installazione e verifica della versione d'integrazione completa restano da confermare.
-**Aggiornato:** 19 novembre 2026.
+**Stato:** flusso RTCM e RTK FIX verificati con test manuale; installazione e verifica della versione d'integrazione completa restano da confermare.
+
+**Aggiornato:** 23 novembre 2026.
+
+## Aggiornamento dal campo, 20–23 novembre 2026
+
+L'utente ha mostrato `base.service` **active (running)** dal 16 novembre sul Raspberry Base, con `/home/antenna/Documents/base_manager.py` (PID 1521), messaggi RTCM 1005 ripetuti con coordinate `45.9047663, 12.4374086` e porta TCP `0.0.0.0:5000` in ascolto. L'indirizzo Tailscale riportato era `100.85.248.82`; dal Rover `nc -vz -w 3 100.85.248.82 5000` è riuscito. Queste sono osservazioni datate, non una verifica continua del servizio né del contenuto dei frame ricevuti dal Rover.
+
+La UI Rover mostrava **Correzioni RTCM: non configurate** quando `telemetry_server.py` era stato avviato senza `BASE_TAILSCALE_HOST`. Dopo l'avvio manuale con `BASE_TAILSCALE_HOST=100.85.248.82`, `BASE_RTCM_PORT=5000` e le coordinate Base per il marker, l'utente ha riferito di aver ottenuto `FIX`. Il 23 novembre ha riferito di non riuscire a riottenere `FIX`; durante questa verifica la UI mostrava di nuovo **non configurate**, mentre la connessione TCP alla porta 5000 riusciva. Non è stato ancora comunicato lo stato RTK dopo l'ultimo riavvio con le variabili, né è stata dimostrata la stabilità del FIX in movimento. La procedura aggiornata è nel [README operativo](../README.md#se-non-arriva-fix).
+
+Le descrizioni storiche più sotto, che riportano il servizio Base fermo e il nuovo codice non installato, si riferiscono alle verifiche precedenti al 20 novembre. Il processo Base osservato attivo non è stato confrontato byte per byte con il sorgente locale; l'installazione dell'intera integrazione API/frontend resta da verificare.
 
 ## Obiettivo concordato
 

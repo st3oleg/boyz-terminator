@@ -1,6 +1,6 @@
 # Documentazione Terminator
 
-Questa documentazione descrive il repository e il percorso verso un robot RTK per lo sfalcio. La valutazione iniziale è del 12 novembre 2026; stato RTK, registrazione e calibrazione motori sono aggiornati al 19 novembre 2026.
+Questa documentazione descrive il repository e il percorso verso un robot RTK per lo sfalcio. La valutazione iniziale è del 12 novembre 2026. Le guide di calibrazione e riproduzione includono le prove manuali del 23 novembre 2026.
 
 ## Documenti
 
@@ -8,8 +8,9 @@ Questa documentazione descrive il repository e il percorso verso un robot RTK pe
 - [Studio di efficacia e fattibilità](fattibilita-efficacia.md): benefici possibili, limiti sul campo, valutazione economica e quadro normativo da verificare.
 - [Specifiche obiettivo e piano di sviluppo](specifica-e-piano.md): architettura proposta, requisiti da definire e fasi per arrivare a prove sicure.
 - [Analisi e verifica GPS RTK](gap_analisi_risoluzione_GPSRTK.md): configurazione osservata, procedura ripetibile di verifica RTCM/seriale/GNSS e gap prima della guida autonoma.
-- [Calibrazione motori e dati delle tracce](calibrazione-motori-e-tracce.md): trim differenziale, campi registrati, curva velocità/comando e passaggi per la raccolta sul campo.
-- [Riproduzione traccia](riproduzione-traccia.md): validazione, anteprima sul Rover e condizioni ancora necessarie prima del movimento automatico.
+- [Calibrazione motori e dati delle tracce](calibrazione-motori-e-tracce.md): trim differenziale, risultati delle tre prove manuali, slittamento e nuova calibrazione dopo la sostituzione delle ruote.
+- [Riproduzione traccia](riproduzione-traccia.md): registrazione, copia dei JSON, anteprima e condizioni per la prima ripetizione con Pure Pursuit.
+- [Video, telemetria e rete](video-telemetria-e-rete.md): camere USB/CSI, cinque preset, significato di PING e RTT, diagnosi di latenza e versioni Git discusse.
 
 ## Sintesi
 
