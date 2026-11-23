@@ -52,7 +52,7 @@ class CSICamera:
         while not self._stop.is_set():
             command = [
                 self.command, "--camera", "0", "-t", "0", "--codec", "mjpeg",
-                "--width", "1280", "--height", "720", "--framerate", "15",
+                "--width", "960", "--height", "540", "--framerate", "10",
                 "-n", "-o", "-",
             ]
             try:

@@ -28,8 +28,6 @@
             -webkit-mask-image: linear-gradient(to right, transparent 0%, black 20%, black 80%, transparent 100%);
         }
 
-        .fps-badge { cursor: pointer; background: #1e293b; border: 1px solid #334155; padding: 2px 7px; border-radius: 5px; font-weight: 700; transition: all 0.15s; }
-        .fps-badge:hover, .fps-badge.active { background: #0284c7; color: #fff; border-color: #38bdf8; }
 
         .dpad-btn {
             background: rgba(30, 41, 59, 0.9);
@@ -178,14 +176,6 @@
                 <span id="conn-dot" class="w-2 h-2 rounded-full bg-yellow-400 animate-pulse"></span>
                 <span id="conn-status" class="text-[10px] font-bold text-yellow-400">AVVIO...</span>
             </div>
-            <div class="h-4 w-[1px] bg-slate-700"></div>
-            <div class="flex items-center gap-1">
-                <span class="text-[9px] text-slate-400">FPS:</span>
-                <span class="fps-badge text-[10px]" onclick="setVideoFps(2)">2</span>
-                <span class="fps-badge text-[10px]" onclick="setVideoFps(4)">4</span>
-                <span class="fps-badge text-[10px] active" onclick="setVideoFps(10)">10</span>
-                <span class="fps-badge text-[10px]" onclick="setVideoFps(30)">30</span>
-            </div>
         </div>
     </div>
 
@@ -233,7 +223,7 @@
                     <span>⚡</span> <span>POTENZA MOTORI</span>
                 </span>
                 <span class="flex items-center gap-2">
-                    <span class="text-[10px] text-slate-400">PING: <b id="ping-text" class="text-emerald-400">--</b>ms</span>
+                    <span class="text-[10px] text-slate-400" title="Età della telemetria WebSocket ricevuta dal robot">PING: <b id="ping-text" class="text-emerald-400">--</b> ms</span>
                     <span id="motor-state-badge" class="px-2 py-0.5 rounded text-[10px] font-black bg-slate-800 text-slate-400 border border-slate-700">STOP</span>
                 </span>
             </div>
@@ -414,7 +404,6 @@
         let currentMainCam = "usb1";
         let currentCameraPreset = localStorage.getItem('terminator-camera-preset') || 'balanced';
         if (!CAMERA_PRESET_KEYS.includes(currentCameraPreset)) currentCameraPreset = 'balanced';
-        let currentFps = 10;
         let ws = null;
         let currentMotorTrim = 0;
         let motorTrimStatusOverride = false;
@@ -558,6 +547,7 @@
                         }
                     }
                     else if (data.type === "telemetry") {
+                        // PING in Autopilota indica sempre l'età della telemetria.
                         if (data.timestamp) {
                             document.getElementById('ping-text').innerText = Math.max(1, Date.now() - data.timestamp);
                         }
@@ -944,22 +934,15 @@
             renderCamsSidebar();
         }
 
-        async function setVideoFps(fps) {
-            currentFps = fps;
-            document.querySelectorAll('.fps-badge').forEach(b => {
-                b.classList.toggle('active', parseInt(b.innerText) === fps);
-            });
-        }
-
         setInterval(() => {
-            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+            if (document.hidden || !ws || ws.readyState !== WebSocket.OPEN) return;
             Object.keys(CAMS).forEach(key => {
                 if (key !== currentMainCam) {
                     const el = document.getElementById(`thumb-${key}`);
                     if (el) el.src = `${cameraUrl(key, 'snapshot')}?t=${Date.now()}`;
                 }
             });
-        }, 1500);
+        }, 5000);
 
         // --- MINIMAPPA TATTICA ---
         function initTacticalMap() {

@@ -102,6 +102,8 @@ Per vedere una sola camera con il ping del robot apri `http://<IP_DEL_RASPBERRY>
 
 Il controllo **Immagine** delle due EMEET offre cinque livelli: Notturno+, Notturno, Bilanciato, Diurno e Sole forte. I due livelli estremi richiedono più esposizione/gain o meno esposizione rispetto ai tre preset precedenti. Il server legge i limiti V4L2 di ciascuna webcam e adatta i valori richiesti; il messaggio sotto al cursore mostra quelli realmente applicati. Un'immagine CSI fortemente rosa alla luce diurna può indicare una camera NoIR senza filtro infrarosso: in quel caso serve un filtro IR-cut per colori fedeli.
 
+In Autopilota l'indicatore **PING** mostra sempre l'età della telemetria WebSocket (`ora del browser - timestamp inviato dal robot`); non è l'RTT HTTP delle pagine camera. Le miniature si aggiornano ogni 5 secondi; lo stream CSI è limitato a 960×540 e 10 fps per ridurre il traffico. I vecchi pulsanti FPS non modificavano lo stream e sono stati rimossi.
+
 ## Riferimento ai file
 
 | Script | Funzione | Porta/interfaccia |
