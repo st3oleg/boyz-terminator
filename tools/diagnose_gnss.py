@@ -15,6 +15,46 @@ from modules.gps import GPSReader
 from modules.rtcm_client import RTCMClient
 
 
+def msm4_observations(payload, satellites):
+    """Return active MSM4 cells as satellite, signal, C/N0 and phase flags."""
+    bit_count = len(payload) * 8
+    if bit_count < 169:
+        return
+    value = int.from_bytes(payload, "big")
+
+    def bits(offset, width):
+        return (value >> (bit_count - offset - width)) & ((1 << width) - 1)
+
+    signals = [signal for signal in range(1, 33) if bits(136 + signal, 1)]
+    cell_start = 169
+    cell_end = cell_start + len(satellites) * len(signals)
+    if bit_count < cell_end:
+        return
+    candidates = ((satellite, signal) for satellite in satellites for signal in signals)
+    cells = [
+        pair for index, pair in enumerate(candidates)
+        if bits(cell_start + index, 1)
+    ]
+
+    # MSM4 stores 18 bits per satellite, then one array per observation field.
+    start = cell_end + 18 * len(satellites)
+    count = len(cells)
+    if bit_count < start + 48 * count:
+        return
+    phase_start = start + 15 * count
+    lock_start = phase_start + 22 * count
+    half_cycle_start = lock_start + 4 * count
+    cn0_start = half_cycle_start + count
+    for index, (satellite, signal) in enumerate(cells):
+        yield (
+            satellite, signal,
+            bits(cn0_start + 6 * index, 6),
+            bits(phase_start + 22 * index, 22) != (1 << 21),
+            bits(lock_start + 4 * index, 4),
+            bits(half_cycle_start + index, 1),
+        )
+
+
 class GNSSReport:
     def __init__(self):
         self.sentences = Counter()
@@ -25,6 +65,7 @@ class GNSSReport:
         self.signals = {}
         self.rtcm_types = Counter()
         self.rtcm_satellites = {}
+        self.msm4_signals = {}
         self.buffer = bytearray()
 
     def read_nmea(self, line):
@@ -73,9 +114,25 @@ class GNSSReport:
             if size >= 18 and 107 <= kind // 10 <= 113 and 1 <= kind % 10 <= 7:
                 # RTCM MSM: maschera satelliti di 64 bit dall'offset 73.
                 mask = (int.from_bytes(payload[9:18], "big") >> 7) & ((1 << 64) - 1)
-                self.rtcm_satellites[kind] = [
-                    sat for sat in range(1, 65) if mask & (1 << (64 - sat))
-                ]
+                satellites = [sat for sat in range(1, 65) if mask & (1 << (64 - sat))]
+                self.rtcm_satellites[kind] = satellites
+                if kind % 10 == 4:
+                    self.read_msm4(kind, payload, satellites)
+
+    def read_msm4(self, kind, payload, satellites):
+        for satellite, signal, cn0, phase_valid, lock, half_cycle in msm4_observations(payload, satellites):
+            key = f"{kind}/{signal}"
+            stats = self.msm4_signals.setdefault(key, {
+                "cn0": [], "phase_satellite_slots": set(), "missing_phase": 0,
+                "lock_indicator_zero": 0, "half_cycle_flag": 0,
+            })
+            stats["cn0"].append(cn0)
+            if phase_valid:
+                stats["phase_satellite_slots"].add(satellite)
+                stats["lock_indicator_zero"] += lock == 0
+                stats["half_cycle_flag"] += half_cycle
+            else:
+                stats["missing_phase"] += 1
 
     def summary(self, rtcm):
         return {
@@ -91,6 +148,17 @@ class GNSSReport:
             "rtcm_transport": rtcm,
             "rtcm_message_counts": dict(sorted(self.rtcm_types.items())),
             "rtcm_msm_satellite_slots_latest": self.rtcm_satellites,
+            "rtcm_msm4_by_message_and_signal_id": {
+                key: {
+                    "observations": len(stats["cn0"]),
+                    "cn0_dbhz_median": median(stats["cn0"]),
+                    "phase_satellite_slots": sorted(stats["phase_satellite_slots"]),
+                    "missing_phase": stats["missing_phase"],
+                    "lock_indicator_zero": stats["lock_indicator_zero"],
+                    "half_cycle_flag": stats["half_cycle_flag"],
+                }
+                for key, stats in sorted(self.msm4_signals.items())
+            },
         }
 
 
