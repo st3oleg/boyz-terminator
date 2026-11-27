@@ -1,0 +1,11 @@
+[Unit]
+Description=Telemetria e controllo del Rover Terminator
+Requires=terminator-rover.socket
+After=terminator-rover.socket
+
+[Service]
+User=terminator
+WorkingDirectory=/home/terminator/Documents
+Environment=BASE_TAILSCALE_HOST=100.85.248.82
+EnvironmentFile=-/home/terminator/.config/terminator/rover-01.env
+ExecStart=/usr/bin/python3 -u /home/terminator/Documents/telemetry_server.py

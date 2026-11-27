@@ -18,6 +18,9 @@ import asyncio
 import time
 import subprocess
 import shutil
+import sqlite3
+import socket
+from urllib.parse import urljoin
 import aiohttp
 from aiohttp import web
 
@@ -32,6 +35,8 @@ sys.path.append(BASE_DIR)
 from modules.gps import GPSReader
 from modules.rtcm_client import RTCMClient
 from modules.imu import IMUReader
+from modules.hub_outbox import OutboxFull
+from modules.hub_reporter import HubReporter
 from modules.motor import MotorDriver
 from modules.route_replay import RouteReplay, load_mission, list_mission_history
 from modules.geofence_store import save_geofence, load_geofence, list_geofences, normalize_geofence
@@ -54,7 +59,10 @@ if not BASE_API_URL and BASE_TAILSCALE_HOST:
 BASE_API_TOKEN = os.environ.get("BASE_API_TOKEN", "").strip()
 rtcm_client = RTCMClient(BASE_TAILSCALE_HOST, BASE_RTCM_PORT, gps.write_rtcm)
 base_uplink_task_handle = None
+base_state_task_handle = None
 rtcm_task_handle = None
+hub_reporter = None
+hub_task_handle = None
 
 # =========================================================================
 # PARAMETRI E STATO TRAZIONE (LOGICA TEST_MOTORI.PY)
@@ -162,27 +170,22 @@ replay_route = None
 replay_mission = None
 replay_preview = None
 
-# Coordinate Antenna Base (configurabili sul Raspberry tramite environment).
-def _base_coordinate(name):
-    try:
-        value = float(os.environ.get(name, ""))
-        return value if math.isfinite(value) else 0.0
-    except (TypeError, ValueError):
-        return 0.0
+def base_position(lat, lon):
+    if (
+        type(lat) in (int, float) and type(lon) in (int, float)
+        and -90 <= lat <= 90 and -180 <= lon <= 180
+        and (lat != 0 or lon != 0)
+    ):
+        return {"lat": lat, "lon": lon, "available": True}
+    return {"lat": None, "lon": None, "available": False}
 
 
-BASE_COORDS = {
-    "lat": _base_coordinate("BASE_LAT"),
-    "lon": _base_coordinate("BASE_LON"),
-}
-if not (-90 <= BASE_COORDS["lat"] <= 90 and -180 <= BASE_COORDS["lon"] <= 180):
-    BASE_COORDS = {"lat": 0.0, "lon": 0.0}
-BASE_COORDS["available"] = (
-    "BASE_LAT" in os.environ and "BASE_LON" in os.environ
-    and -90 <= BASE_COORDS["lat"] <= 90
-    and -180 <= BASE_COORDS["lon"] <= 180
-    and (BASE_COORDS["lat"] != 0.0 or BASE_COORDS["lon"] != 0.0)
-)
+# Coordinate manuali facoltative per le installazioni esistenti.
+try:
+    MANUAL_BASE_POSITION = base_position(float(os.environ["BASE_LAT"]), float(os.environ["BASE_LON"]))
+except (KeyError, ValueError):
+    MANUAL_BASE_POSITION = base_position(None, None)
+
 
 ws_clients = set()
 
@@ -730,6 +733,15 @@ async def ws_handler(request):
                             "diagnostic_events_count": len(recorded_events),
                             "centerline": recorded_points
                         })
+                        if hub_reporter is not None:
+                            try:
+                                await hub_reporter.enqueue("mission_index", {
+                                    "filename": filename,
+                                    "mission": current_mission_name,
+                                    "points_count": len(recorded_points),
+                                })
+                            except (sqlite3.Error, OutboxFull, ValueError) as exc:
+                                print(f"[HUB] Accodamento indice missione fallito ({type(exc).__name__}).")
                         for c in list(ws_clients):
                             try:
                                 await c.send_str(resp)
@@ -758,7 +770,7 @@ async def watchdog_task():
                 _record_motor_event("watchdog_stop")
 
 
-async def telemetry_broadcaster():
+async def telemetry_broadcaster(app):
     """Invia a 5 Hz il payload unificato per la Mappa e per la dashboard FPV."""
     global last_recorded_fix_timestamp, replay_preview
     while True:
@@ -892,11 +904,7 @@ async def telemetry_broadcaster():
                 "roll": i_data["roll"],
                 "yaw": i_data["yaw"]
             },
-            "base": {
-                "lat": BASE_COORDS["lat"],
-                "lon": BASE_COORDS["lon"],
-                "available": BASE_COORDS["available"]
-            },
+            "base": app["base_position"],
             "rtcm": rtcm_client.snapshot()
         }
 
@@ -906,6 +914,26 @@ async def telemetry_broadcaster():
                 await client.send_str(raw_json)
             except Exception:
                 pass
+
+
+async def poll_base_position(app):
+    session = app["base_http_session"]
+    state_url = urljoin(BASE_API_URL, "/api/state")
+    while True:
+        position = MANUAL_BASE_POSITION
+        try:
+            async with session.get(state_url, allow_redirects=False) as response:
+                if response.status == 200:
+                    state = await response.json()
+                    base = state.get("base") if isinstance(state, dict) else None
+                    if isinstance(base, dict) and base.get("available") is True:
+                        candidate = base_position(base.get("lat"), base.get("lon"))
+                        if candidate["available"]:
+                            position = candidate
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+            pass
+        app["base_position"] = position
+        await asyncio.sleep(5)
 
 
 async def rover_uplink_task(app):
@@ -947,12 +975,29 @@ async def rover_uplink_task(app):
         await asyncio.sleep(1.0)
 
 
+def hub_status_snapshot():
+    data = gps.get_data()
+    has_fix = bool(data["last_update"])
+    return {
+        "gnss": {
+            "lat": data["lat"] if has_fix else None,
+            "lon": data["lon"] if has_fix else None,
+            "rtk_status": data["rtk_status"],
+            "fix_timestamp": data["last_update"] or None,
+        },
+        "rtcm": rtcm_client.snapshot(),
+    }
+
+
 # --- LIFECYCLE APPLICAZIONE ---
 
 async def on_startup(app):
-    global motors, video_processes, usb_camera_devices, base_uplink_task_handle, rtcm_task_handle
+    global motors, video_processes, usb_camera_devices, rtcm_task_handle
+    global base_uplink_task_handle, base_state_task_handle
+    global hub_reporter, hub_task_handle
 
     app["base_http_session"] = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=3))
+    app["base_position"] = MANUAL_BASE_POSITION
 
     # 1. Rilevamento dinamico ed avvio dei due stream USB su porte 8081/8082
     try:
@@ -1004,21 +1049,41 @@ async def on_startup(app):
         rtcm_task_handle = asyncio.create_task(rtcm_client.run())
     base_uplink_task_handle = asyncio.create_task(rover_uplink_task(app))
     asyncio.create_task(watchdog_task())
-    asyncio.create_task(telemetry_broadcaster())
+    if BASE_API_URL:
+        base_state_task_handle = asyncio.create_task(poll_base_position(app))
+    asyncio.create_task(telemetry_broadcaster(app))
+    hub_endpoint = os.environ.get("ROVER_HUB_URL", "").strip()
+    if hub_endpoint:
+        try:
+            hub_reporter = await asyncio.to_thread(
+                HubReporter, hub_endpoint, os.environ.get("ROVER_HUB_DEVICE_ID", ""),
+                os.environ.get("ROVER_HUB_TOKEN", ""),
+                os.environ.get("ROVER_HUB_OUTBOX", os.path.join(BASE_DIR, "hub-outbox.sqlite3")),
+            )
+        except (OSError, sqlite3.Error, ValueError) as exc:
+            print(f"[HUB] Invio non avviato ({type(exc).__name__}).")
+        else:
+            hub_task_handle = asyncio.create_task(hub_reporter.run(hub_status_snapshot))
 
 
 async def on_cleanup(app):
-    global motors, video_processes, base_uplink_task_handle, rtcm_task_handle
+    global motors, video_processes, rtcm_task_handle
+    global base_uplink_task_handle, base_state_task_handle
+    global hub_reporter, hub_task_handle
 
-    for task in (base_uplink_task_handle, rtcm_task_handle):
+    tasks = (base_uplink_task_handle, base_state_task_handle, rtcm_task_handle, hub_task_handle)
+    for task in tasks:
         if task:
             task.cancel()
     await asyncio.gather(
-        *(task for task in (base_uplink_task_handle, rtcm_task_handle) if task),
+        *(task for task in tasks if task),
         return_exceptions=True,
     )
     base_uplink_task_handle = None
+    base_state_task_handle = None
     rtcm_task_handle = None
+    hub_task_handle = None
+    hub_reporter = None
 
     for process in video_processes.values():
         try:
@@ -1080,4 +1145,11 @@ if __name__ == '__main__':
     print("   Video + Ping CSI:   http://100.73.187.83:8080/camera/csi")
     print("   Watchdog:           1.0s Fail-Safe")
     print("=" * 60 + "\n")
-    web.run_app(app, host='0.0.0.0', port=8080)
+    if os.environ.get("LISTEN_PID") == str(os.getpid()):
+        if os.environ.get("LISTEN_FDS") != "1":
+            raise RuntimeError("Atteso un socket di ascolto da systemd")
+        with socket.socket(fileno=3) as listener:
+            os.set_inheritable(listener.fileno(), False)
+            web.run_app(app, sock=listener)
+    else:
+        web.run_app(app, host='0.0.0.0', port=8080)

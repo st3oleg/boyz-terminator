@@ -657,6 +657,10 @@
                     baseMapCenteredOnce = true;
                 }
             } else {
+                if (isBaseVisible) {
+                    baseMarker.remove();
+                    isBaseVisible = false;
+                }
                 document.getElementById('base-coords-display').innerText = 'Coordinate Base in attesa';
             }
         }

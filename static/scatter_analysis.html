@@ -46,14 +46,19 @@
                 <p class="text-xs text-slate-500 dark:text-slate-400 mt-2">WebSocket: <span id="connection-status" class="font-bold text-amber-500">Connessione in corso…</span> · RTK Rover: <span id="rover-fix-status" class="font-bold">--</span></p>
             </div>
             
-            <div class="flex items-center gap-2 md:gap-4 mt-4 md:mt-0 w-full md:w-auto">
-                <select id="scale-selector" onchange="changeScale()" class="bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 text-sm md:text-base rounded-xl focus:ring-blue-500 focus:border-blue-500 block p-3 font-bold w-full md:w-auto outline-none transition">
+            <div class="flex flex-wrap items-center gap-2 md:gap-4 mt-4 md:mt-0 w-full md:w-auto">
+                <select id="scale-selector" aria-label="Raggio" onchange="changeScale()" class="bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 text-sm md:text-base rounded-xl focus:ring-blue-500 focus:border-blue-500 block p-3 font-bold flex-1 md:flex-none outline-none transition">
                     <option value="0.005">Raggio: 0.5 cm</option>
                     <option value="0.01">Raggio: 1 cm</option>
                     <option value="0.025">Raggio: 2.5 cm</option>
                     <option value="0.05">Raggio: 5 cm</option>
                     <option value="0.15" selected>Raggio: 15 cm</option>
                     <option value="1.00">Raggio: 1 m</option>
+                </select>
+                <select id="unit-selector" aria-label="Unità dei grafici" onchange="changeScale()" class="bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 text-sm md:text-base rounded-xl focus:ring-blue-500 focus:border-blue-500 block p-3 font-bold outline-none transition">
+                    <option value="mm">mm</option>
+                    <option value="cm" selected>cm</option>
+                    <option value="m">m</option>
                 </select>
                 <button id="btn-toggle-analysis" onclick="toggleAnalysis()" class="bg-green-500 hover:bg-green-400 text-white font-black py-3 px-6 rounded-xl transition-all shadow-lg active:scale-95 whitespace-nowrap w-full md:w-auto">
                     ▶ AVVIA
@@ -73,11 +78,11 @@
                 <div class="grid grid-cols-2 gap-2 mb-2">
                     <div class="bg-slate-100 dark:bg-slate-900 p-2 rounded-lg text-center border border-green-500/30">
                         <div class="text-[10px] text-slate-500 uppercase font-bold">CEP (50%)</div>
-                        <div class="text-green-500 font-mono font-black" id="rover-cep">0.000 m</div>
+                        <div class="text-green-500 font-mono font-black" id="rover-cep">0.0 cm</div>
                     </div>
                     <div class="bg-slate-100 dark:bg-slate-900 p-2 rounded-lg text-center border border-red-500/30">
                         <div class="text-[10px] text-slate-500 uppercase font-bold">2DRMS (95%)</div>
-                        <div class="text-red-500 font-mono font-black" id="rover-drms">0.000 m</div>
+                        <div class="text-red-500 font-mono font-black" id="rover-drms">0.0 cm</div>
                     </div>
                 </div>
 
@@ -96,11 +101,11 @@
                 <div class="grid grid-cols-2 gap-2 mb-2">
                     <div class="bg-slate-100 dark:bg-slate-900 p-2 rounded-lg text-center border border-green-500/30">
                         <div class="text-[10px] text-slate-500 uppercase font-bold">CEP (50%)</div>
-                        <div class="text-green-500 font-mono font-black" id="base-cep">0.000 m</div>
+                        <div class="text-green-500 font-mono font-black" id="base-cep">0.0 cm</div>
                     </div>
                     <div class="bg-slate-100 dark:bg-slate-900 p-2 rounded-lg text-center border border-red-500/30">
                         <div class="text-[10px] text-slate-500 uppercase font-bold">2DRMS (95%)</div>
-                        <div class="text-red-500 font-mono font-black" id="base-drms">0.000 m</div>
+                        <div class="text-red-500 font-mono font-black" id="base-drms">0.0 cm</div>
                     </div>
                 </div>
 
@@ -141,7 +146,13 @@
 
         // I campioni vengono accumulati solo quando l'analisi è attiva.
         let isAnalyzing = false;
+        const units = {
+            mm: { factor: 1000, decimals: 0 },
+            cm: { factor: 100, decimals: 1 },
+            m: { factor: 1, decimals: 3 }
+        };
         let currentScale = 0.15;
+        let currentUnit = 'cm';
         let roverDataArray = [];
         let baseDataArray = [];
         let lastRoverFixTime = null;
@@ -155,11 +166,9 @@
 
         function changeScale() {
             currentScale = parseFloat(document.getElementById('scale-selector').value);
-            if (roverDataArray.length > 0) updateCharts(roverDataArray, 'rover');
-            else Plotly.react('rover-scatter', [], getScatterLayout('#3b82f6', 0, 0), {displayModeBar: false});
-            
-            if (baseDataArray.length > 0) updateCharts(baseDataArray, 'base');
-            else Plotly.react('base-scatter', [], getScatterLayout('#f97316', 0, 0), {displayModeBar: false});
+            currentUnit = document.getElementById('unit-selector').value;
+            updateCharts(roverDataArray, 'rover');
+            updateCharts(baseDataArray, 'base');
         }
 
         function toggleAnalysis() {
@@ -170,13 +179,8 @@
                 baseDataArray = [];
                 lastRoverFixTime = null;
                 lastBaseFixTime = null;
-                for (const id of ['rover-count', 'base-count']) document.getElementById(id).innerText = '0';
-                for (const id of ['rover-cep', 'rover-drms', 'base-cep', 'base-drms']) document.getElementById(id).innerText = '0.000 m';
                 document.getElementById('base-stream-status').innerText = 'In attesa di campioni GNSS Base dal server.';
-                Plotly.react('rover-scatter', [], getScatterLayout('#3b82f6', 0, 0), {displayModeBar: false});
-                Plotly.react('base-scatter', [], getScatterLayout('#f97316', 0, 0), {displayModeBar: false});
-                Plotly.react('rover-hist', [], getHistLayout(), {displayModeBar: false});
-                Plotly.react('base-hist', [], getHistLayout(), {displayModeBar: false});
+                changeScale();
                 btn.innerHTML = '■ STOP';
                 btn.classList.remove('bg-green-500', 'hover:bg-green-400');
                 btn.classList.add('bg-red-500', 'hover:bg-red-400', 'pulse-record');
@@ -209,7 +213,8 @@
                 document.getElementById('rover-fix-status').innerText = rover.rtk_status || 'NO FIX';
                 if (isAnalyzing) collectSample(rover, {type: 'rover', points: roverDataArray, get lastFixTime() { return lastRoverFixTime; }, set lastFixTime(value) { lastRoverFixTime = value; }});
             }
-            if (message.base && isAnalyzing) {
+            // La posizione di riferimento da /api/state non ha un timestamp di fix.
+            if (isAnalyzing && Number.isFinite(message.base?.fix_timestamp)) {
                 const before = baseDataArray.length;
                 collectSample(message.base, {type: 'base', points: baseDataArray, get lastFixTime() { return lastBaseFixTime; }, set lastFixTime(value) { lastBaseFixTime = value; }});
                 if (baseDataArray.length !== before) document.getElementById('base-stream-status').innerText = 'Ricezione campioni GNSS Base attiva.';
@@ -280,7 +285,8 @@
             else if (currentScale === 0.01) steps = [0.002, 0.004, 0.006, 0.008, 0.010]; 
             else if (currentScale === 0.005) steps = [0.001, 0.002, 0.003, 0.004, 0.005];
 
-            steps.forEach((step, index) => {
+            steps.forEach((stepMeters, index) => {
+                const step = stepMeters * units[currentUnit].factor;
                 let isLast = index === steps.length - 1;
                 shapes.push({
                     type: 'circle', x0: -step, y0: -step, x1: step, y1: step,
@@ -290,7 +296,7 @@
             return shapes;
         }
 
-        function getScatterLayout(solidColor, cep, drms) {
+        function getScatterLayout(cep, drms, range) {
             let shapes = getDynamicGridShapes();
             shapes.push({ type: 'circle', x0: -cep, y0: -cep, x1: cep, y1: cep, line: { color: '#22c55e', dash: 'dash', width: 2 } });
             shapes.push({ type: 'circle', x0: -drms, y0: -drms, x1: drms, y1: drms, line: { color: '#ef4444', dash: 'dot', width: 2 } });
@@ -299,18 +305,18 @@
                 paper_bgcolor: 'transparent', plot_bgcolor: 'transparent',
                 font: { color: fontColor },
                 margin: { l: 40, r: 20, t: 10, b: 40 },
-                xaxis: { range: [-currentScale, currentScale], title: 'Est - Ovest (m)', gridcolor: gridColor, zerolinecolor: fontColor },
-                yaxis: { range: [-currentScale, currentScale], title: 'Sud - Nord (m)', gridcolor: gridColor, zerolinecolor: fontColor, scaleanchor: 'x', scaleratio: 1 },
+                xaxis: { range: [-range, range], title: `Est - Ovest (${currentUnit})`, gridcolor: gridColor, zerolinecolor: fontColor },
+                yaxis: { range: [-range, range], title: `Sud - Nord (${currentUnit})`, gridcolor: gridColor, zerolinecolor: fontColor, scaleanchor: 'x', scaleratio: 1 },
                 shapes: shapes
             };
         }
 
-        function getHistLayout() {
+        function getHistLayout(range) {
             return {
                 paper_bgcolor: 'transparent', plot_bgcolor: 'transparent',
                 font: { color: fontColor },
                 margin: { l: 40, r: 20, t: 10, b: 30 },
-                xaxis: { range: [0, currentScale], title: 'Errore Radiale (m)', gridcolor: gridColor },
+                xaxis: { range: [0, range], title: `Errore Radiale (${currentUnit})`, gridcolor: gridColor },
                 yaxis: { title: 'Frequenza', gridcolor: gridColor }
             };
         }
@@ -328,34 +334,35 @@
             const solidColor = isRover ? '#3b82f6' : '#f97316';
 
             document.getElementById(countId).innerText = data.length;
-            if (data.length === 0) return;
-
+            const { factor, decimals } = units[currentUnit];
+            const range = currentScale * factor;
             const centroid = calcCentroid(data);
             const metersData = data.map(pt => latLonToMeters(pt, centroid));
             
-            const cep = calculateCEP(metersData);
-            const drms = calculate2DRMS(metersData);
+            const cep = calculateCEP(metersData) * factor;
+            const drms = calculate2DRMS(metersData) * factor;
             
-            document.getElementById(cepId).innerText = cep.toFixed(3) + " m";
-            document.getElementById(drmsId).innerText = drms.toFixed(3) + " m";
+            document.getElementById(cepId).innerText = `${cep.toFixed(decimals)} ${currentUnit}`;
+            document.getElementById(drmsId).innerText = `${drms.toFixed(decimals)} ${currentUnit}`;
 
-            const xVals = metersData.map(pt => pt.x);
-            const yVals = metersData.map(pt => pt.y);
-            const rVals = metersData.map(pt => pt.r);
+            const xVals = metersData.map(pt => pt.x * factor);
+            const yVals = metersData.map(pt => pt.y * factor);
+            const rVals = metersData.map(pt => pt.r * factor);
 
             const scatterTrace = {
                 x: xVals, y: yVals, mode: 'markers', type: 'scatter',
+                hovertemplate: `Est: %{x} ${currentUnit}<br>Nord: %{y} ${currentUnit}<extra></extra>`,
                 marker: { color: markerColor, size: 8, line: { width: 0 } }
             };
-            Plotly.react(scatterId, [scatterTrace], getScatterLayout(solidColor, cep, drms), {displayModeBar: false});
+            Plotly.react(scatterId, data.length ? [scatterTrace] : [], getScatterLayout(cep, drms, range), {displayModeBar: false});
 
-            const binSize = currentScale / 30; 
             const histTrace = {
                 x: rVals, type: 'histogram',
                 marker: { color: markerColor, line: { color: solidColor, width: 1 } },
-                xbins: { start: 0, end: currentScale, size: binSize } 
+                hovertemplate: `Errore radiale: %{x} ${currentUnit}<br>Frequenza: %{y}<extra></extra>`,
+                xbins: { start: 0, end: range, size: range / 30 }
             };
-            Plotly.react(histId, [histTrace], getHistLayout(), {displayModeBar: false});
+            Plotly.react(histId, data.length ? [histTrace] : [], getHistLayout(range), {displayModeBar: false});
         }
 
         changeScale();

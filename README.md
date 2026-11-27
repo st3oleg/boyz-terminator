@@ -32,13 +32,13 @@ In Chrome su Windows, usa `Ctrl+Shift+F5`, `Ctrl+Shift+R` oppure `Ctrl+F5` per r
 
 ## Posizione antenna Base RTK
 
-La mappa mostra il marker 📡 solo quando il server riceve coordinate Base valide. Impostare `BASE_LAT` e `BASE_LON` nell'ambiente del servizio Rover con le coordinate reali dell'antenna, poi riavviare il server e ricaricare la pagina. Senza queste coordinate il marker resta nascosto: il server non riceve al momento la posizione GNSS della Base e non deve inventarne una.
-
-Esempio per un avvio manuale (sostituire i valori con quelli misurati):
+Il Rover legge la posizione di riferimento della Base da `GET /api/state` ogni 5 secondi e la invia alla mappa. Usa la stessa origine HTTP dell'uplink verso la Base. La Base determina le coordinate da RTCM 1005/1006 o da NMEA GGA quando disponibile.
 
 ```bash
-BASE_LAT=45.905500 BASE_LON=12.438000 python3 /home/terminator/Documents/telemetry_server.py
+BASE_TAILSCALE_HOST=100.85.248.82 python3 -u /home/terminator/Documents/telemetry_server.py
 ```
+
+Se la Base non risponde o non ha coordinate valide, la mappa nasconde il marker. Le installazioni con `BASE_LAT` e `BASE_LON` già impostate usano quei valori come riserva. La posizione di riferimento non alimenta i campioni GNSS in Scatter Analysis.
 
 Lo stato mostrato in mappa riflette la qualità NMEA ricevuta dal rover. `SINGLE` significa soluzione autonoma senza RTK; `FIX` richiede una soluzione RTK fixed dal ricevitore e correzioni funzionanti.
 
@@ -54,7 +54,11 @@ Per estrarre il riepilogo CSV della curva misurata:
 python3 /home/terminator/Documents/tools/analyze_motor_calibration.py /home/terminator/Documents/missions/<traccia_calibrazione>.json
 ```
 
-Il programma calcola la velocità dallo spostamento tra posizioni GNSS consecutive e usa solo intervalli FIX con dry-run spento, trim zero, comandi uguali sui due lati e comando stabile da almeno 2 secondi. Produce velocità mediana/minima/massima per livello di potenza. È una curva diagnostica: non viene applicata automaticamente al controllo. La traccia `Fix_1.json` è stata registrata prima del salvataggio delle potenze, quindi va acquisita una nuova prova per ricavare questa curva. La guida completa è in [docs/calibrazione-motori-e-tracce.md](docs/calibrazione-motori-e-tracce.md).
+Il programma calcola la velocità dallo spostamento tra posizioni GNSS consecutive e usa solo intervalli FIX con dry-run spento, trim zero, comandi uguali sui due lati e comando stabile da almeno 2 secondi. Produce velocità mediana/minima/massima per livello di potenza. Il CSV è diagnostico e non viene caricato automaticamente dal controllo. `Fix_1.json` precede il salvataggio delle potenze; le nuove prove a 30% e 50% sono state usate per costruire manualmente il profilo sperimentale `profilo_guida.json`. La guida completa è in [docs/calibrazione-motori-e-tracce.md](docs/calibrazione-motori-e-tracce.md).
+
+## Riproduzione supervisionata da terminale
+
+Il modulo `modules.follow_route` sul Raspberry usa Pure Pursuit e `profilo_guida.json`. La prova attuale seleziona il tratto in avanti di `MappaComandoGiusta_1795443596.json` fino al punto 46. Può raggiungere la partenza con un raccordo se il Rover è ancora nella posa finale di una registrazione di riferimento valida. La pagina **Riproduzione** rimane la postazione di anteprima. I comandi, i requisiti e lo stato del collaudo sono nella [guida di riproduzione](docs/riproduzione-traccia.md#controllore-locale-sul-raspberry).
 
 ## Programmi di test
 
@@ -120,6 +124,8 @@ I test hardware non sono avviati automaticamente dal server Rover. Avviali solo 
 ## Integrazione RTK Base / Rover
 
 Il codice locale per client RTCM Rover, uplink API, archivio Base e frontend statico configurabile è stato aggiunto; non è ancora stato installato o verificato sui Raspberry. Lo stato verificato, i gap residui e la procedura sono in [docs/architettura-rtk-base-rover.md](docs/architettura-rtk-base-rover.md).
+
+L'[hub su PC Ubuntu](docs/hub-ubuntu.md) conserva i dati dei dispositivi in PostgreSQL e serve una dashboard web senza Supabase. La prima versione è in `hub/` e si avvia con la [procedura di fase 2](docs/fase-2-hub-ubuntu.md), che include un Rover e una Base simulati. La [fase 1](docs/fase-1-hub-ubuntu.md) raccoglie misure e definisce il formato dei dati. I comandi di teleoperazione e RTCM usano i collegamenti diretti.
 
 La pagina statica in `static/` è pubblicabile su Netlify tramite `netlify.toml`. Impostare `apiBaseUrl` in `static/runtime-config.js` a un endpoint HTTPS della Base raggiungibile dal browser Tailscale. Netlify da solo non rende pubbliche le API private Tailscale; per accesso senza VPN servirà un endpoint relay autenticato.
 

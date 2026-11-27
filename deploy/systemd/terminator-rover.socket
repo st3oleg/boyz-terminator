@@ -1,0 +1,10 @@
+[Unit]
+Description=Socket web del Rover Terminator su Tailscale
+After=tailscaled.service
+
+[Socket]
+ListenStream=100.73.187.83:8080
+FreeBind=yes
+
+[Install]
+WantedBy=sockets.target
