@@ -13,10 +13,11 @@ FIX_TIMEOUT_SECONDS = 3.0
 
 
 class GPSReader:
-    def __init__(self, port="/dev/ttyS0", baudrate=115200, timeout=1.0):
+    def __init__(self, port="/dev/ttyS0", baudrate=115200, timeout=1.0, *, on_nmea=None):
         self.port = port
         self.baudrate = baudrate
         self.timeout = timeout
+        self.on_nmea = on_nmea
         self.running = False
         self.thread = None
         self.ser = None
@@ -101,6 +102,8 @@ class GPSReader:
                     continue
 
                 line = raw_bytes.decode('ascii', errors='replace').strip()
+                if self.on_nmea is not None:
+                    self.on_nmea(line)
                 if line.startswith(('$GNGGA', '$GPGGA')):
                     self._parse_gga(line)
                 elif line.startswith(('$GNRMC', '$GPRMC')):
