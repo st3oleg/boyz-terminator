@@ -59,11 +59,14 @@ class GNSSReport:
     def __init__(self):
         self.sentences = Counter()
         self.gga_quality = Counter()
+        self.gga_diff_age = Counter()
+        self.gga_diff_station = Counter()
         self.satellites = []
         self.hdop = []
         self.used_satellites = {}
         self.signals = {}
         self.rtcm_types = Counter()
+        self.rtcm_station_ids = {}
         self.rtcm_satellites = {}
         self.msm4_signals = {}
         self.buffer = bytearray()
@@ -77,6 +80,10 @@ class GNSSReport:
         self.sentences[identifier[1:]] += 1
         if kind == "GGA" and len(fields) > 8:
             self.gga_quality[fields[6] or "assente"] += 1
+            diff_age = fields[13] if len(fields) > 13 else ""
+            diff_station = fields[14] if len(fields) > 14 else ""
+            self.gga_diff_age[diff_age or "assente"] += 1
+            self.gga_diff_station[diff_station or "assente"] += 1
             try:
                 self.satellites.append(int(fields[7]))
                 self.hdop.append(float(fields[8]))
@@ -111,6 +118,9 @@ class GNSSReport:
                 continue
             kind = (payload[0] << 4) | (payload[1] >> 4)
             self.rtcm_types[kind] += 1
+            if size >= 3 and (kind in (1005, 1006) or 107 <= kind // 10 <= 113 and 1 <= kind % 10 <= 7):
+                station_id = ((payload[1] & 0x0F) << 8) | payload[2]
+                self.rtcm_station_ids.setdefault(kind, Counter())[station_id] += 1
             if size >= 18 and 107 <= kind // 10 <= 113 and 1 <= kind % 10 <= 7:
                 # RTCM MSM: maschera satelliti di 64 bit dall'offset 73.
                 mask = (int.from_bytes(payload[9:18], "big") >> 7) & ((1 << 64) - 1)
@@ -138,6 +148,8 @@ class GNSSReport:
         return {
             "nmea": dict(sorted(self.sentences.items())),
             "gga_quality_4_fix_5_float": dict(self.gga_quality),
+            "gga_differential_age_reported": dict(self.gga_diff_age),
+            "gga_differential_station_reported": dict(self.gga_diff_station),
             "gga_satellites_median": median(self.satellites) if self.satellites else None,
             "gga_hdop_median": median(self.hdop) if self.hdop else None,
             "gsa_used_latest": self.used_satellites,
@@ -147,6 +159,9 @@ class GNSSReport:
             },
             "rtcm_transport": rtcm,
             "rtcm_message_counts": dict(sorted(self.rtcm_types.items())),
+            "rtcm_station_ids": {
+                kind: dict(counts) for kind, counts in sorted(self.rtcm_station_ids.items())
+            },
             "rtcm_msm_satellite_slots_latest": self.rtcm_satellites,
             "rtcm_msm4_by_message_and_signal_id": {
                 key: {
