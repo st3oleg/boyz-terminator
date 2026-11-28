@@ -2,7 +2,8 @@
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
-  const storageKey = 'terminator_zones_geojson';
+  const config = window.TERMINATOR_CONFIG || {};
+  const storageKey = config.sharedMap ? 'terminator_vineyard_boundary' : 'terminator_zones_geojson';
   const surveyKey = 'terminator_vineyard_survey';
   const map = L.map('map', { maxZoom: 22, zoomControl: true }).setView([45.9055, 12.438], 18);
   const localTiles = ['127.0.0.1', 'localhost'].includes(location.hostname) && location.port === '8765';
@@ -580,6 +581,32 @@
     } catch (error) { status(`Importazione fallita: ${error.message}`, true); }
     event.target.value = '';
   };
+  if (config.sharedMap) {
+    $('recordings-link').hidden = false;
+    $('autopilot-link').hidden = !config.roverOrigin;
+    if (config.roverOrigin) $('autopilot-link').href = new URL('autopilota.html', config.roverOrigin);
+    $('generate').hidden = true;
+    $('webots-note').textContent = 'Per generare un mondo Webots esporta il rilievo JSON e importalo nella pagina servita dal PC.';
+    $('load-shared-boundary').hidden = false;
+    $('load-shared-boundary').onclick = async () => {
+      const button = $('load-shared-boundary');
+      button.disabled = true;
+      try {
+        const response = await fetch('/api/v1/map/perimeters', { signal: AbortSignal.timeout(5000) });
+        if (!response.ok) throw new Error('Archivio perimetri HP non disponibile.');
+        const { collection } = await response.json();
+        const geometry = collection.features.find(feature => feature.geometry?.type === 'Polygon')?.geometry;
+        if (!geometry) throw new Error('Nessun poligono disponibile nella Mappa Live.');
+        setPolygon(geometry.coordinates[0].slice(0, -1).map(([lon, lat]) => [lat, lon]));
+        status('Primo poligono della Mappa Live caricato come copia di lavoro.');
+      } catch (error) {
+        status(error.message, true);
+      } finally {
+        button.disabled = false;
+      }
+    };
+  }
+
   $('generate').onclick = async () => {
     try {
       const result = validatedSurvey();

@@ -6,6 +6,7 @@
   <title>Rilievo vigneto · RTK GCS</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="https://unpkg.com/@geoman-io/leaflet-geoman-free@latest/dist/leaflet-geoman.css">
+  <script src="runtime-config.js"></script>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/@geoman-io/leaflet-geoman-free@latest/dist/leaflet-geoman.min.js"></script>
   <style>
@@ -27,7 +28,7 @@
   </style>
 </head>
 <body>
-  <header><strong>RTK<span>GCS</span></strong><nav><a href="index.html">Mappa Live</a><a class="active" href="registrazioni.html">Vigneto</a><a href="autopilota.html">Autopilota</a></nav></header>
+  <header><strong>RTK<span>GCS</span></strong><nav><a href="index.html">Mappa Live</a><a class="active" href="registrazioni.html">Vigneto</a><a id="recordings-link" href="missioni.html" hidden>Registrazioni</a><a id="autopilot-link" href="autopilota.html">Autopilota</a></nav></header>
   <main>
     <aside>
       <h1>Rilievo vigneto</h1>
@@ -36,6 +37,7 @@
       <h2>1. Perimetro autorizzato</h2>
       <div class="actions"><button id="draw">Disegna poligono</button><button id="edit">Modifica vertici</button><button id="clear">Cancella</button></div>
       <div class="actions"><button id="import">Importa GeoJSON</button><input id="import-file" type="file" accept=".json,.geojson" hidden><button id="export-geofence">Esporta GeoJSON</button></div>
+      <button id="load-shared-boundary" hidden>Carica un perimetro dalla Mappa</button>
       <p class="note">Il perimetro può avere più di quattro vertici. Le sue coordinate WGS84 sono ricavate dai punti sulla mappa e salvate nel browser.</p>
       <h2>2. Riconoscimento filari</h2>
       <div class="actions"><button class="primary" id="detect">Analizza immagine satellitare</button></div>
@@ -55,7 +57,7 @@
       <label for="tree-visual">Modello visivo delle piante</label><select id="tree-visual"><option value="cypress">Cypress Webots (richiede accesso al modello online)</option><option value="simple">Cipresso semplice locale (più leggero)</option></select>
       <h2>4. Crea il mondo</h2>
       <div class="actions"><button id="import-survey">Importa rilievo JSON</button><input id="survey-file" type="file" accept=".json" hidden><button id="export-survey">Esporta rilievo JSON</button><button class="primary" id="generate">Genera mondo Webots</button></div>
-      <p class="note">“Genera mondo” funziona quando questa pagina è aperta dal server locale sul PC. Il mondo viene salvato nella cartella <code>webots/worlds</code>.</p>
+      <p class="note" id="webots-note">“Genera mondo” funziona quando questa pagina è aperta dal server locale sul PC. Il mondo viene salvato nella cartella <code>webots/worlds</code>.</p>
       <div id="summary"></div><div id="status" role="status">Disegna il perimetro oppure carica un GeoJSON.</div>
     </aside><div id="map"></div>
   </main>

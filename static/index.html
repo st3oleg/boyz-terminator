@@ -46,6 +46,7 @@
         <div class="flex gap-2.5 md:gap-4 items-center text-xs md:text-sm">
             <a href="#" class="text-blue-500 font-semibold border-b-2 border-blue-500 pb-1">Mappa Live</a>
             <a href="registrazioni.html" class="text-slate-500 hover:text-slate-800 dark:text-slate-400 hover:dark:text-slate-200 font-medium transition">Vigneto</a>
+            <a href="missioni.html" data-hub-only hidden class="text-slate-500 hover:text-slate-800 dark:text-slate-400 font-medium transition">Registrazioni</a>
             <a href="riproduzione.html" class="text-slate-500 hover:text-slate-800 dark:text-slate-400 hover:dark:text-slate-200 font-medium transition">Riproduzione</a>
             
             <a href="autopilota.html" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3 py-1.5 rounded-xl transition text-xs md:text-sm shadow-md active:scale-95 flex items-center gap-1.5" title="Plancia Multi-Cam & Autopilota">
@@ -267,10 +268,11 @@
             }
         }
         if (config.sharedMap) {
+            document.querySelectorAll("[data-hub-only]").forEach(link => { link.hidden = false; });
             const mapLinks = document.querySelectorAll('a[href$=".html"]');
             for (const link of mapLinks) {
                 const href = link.getAttribute('href');
-                if (['impostazioni_widgets.html', 'scatter_analysis.html'].includes(href)) continue;
+                if (['impostazioni_widgets.html', 'scatter_analysis.html', 'registrazioni.html', 'missioni.html'].includes(href)) continue;
                 if (config.roverOrigin) {
                     link.href = new URL(href, config.roverOrigin).href;
                 } else {

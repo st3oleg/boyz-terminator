@@ -456,6 +456,21 @@ async def handle_replay_missions(request):
     return web.json_response({"missions": names})
 
 
+async def handle_mission_download(request):
+    filename = request.query.get("filename", "")
+    try:
+        mission = await asyncio.to_thread(load_mission, MISSIONS_DIR, filename)
+        return web.json_response(mission, dumps=lambda value: json.dumps(
+            value, allow_nan=False, ensure_ascii=False, separators=(",", ":")
+        ))
+    except (OSError, ValueError, RecursionError):
+        return web.json_response({"error": "mission_unavailable"}, status=404)
+
+
+async def handle_vineyard_js(request):
+    return web.FileResponse(os.path.join(STATIC_DIR, "vineyard.js"))
+
+
 async def handle_scatter_analysis(request):
     file_path = os.path.join(STATIC_DIR, "scatter_analysis.html")
     if os.path.exists(file_path):
@@ -1120,6 +1135,8 @@ app.router.add_get('/autopilota.html', handle_autopilota)
 app.router.add_get('/riproduzione.html', handle_riproduzione)
 app.router.add_get('/riproduzione.js', handle_riproduzione_js)
 app.router.add_get('/api/replay/missions', handle_replay_missions)
+app.router.add_get('/api/recordings/mission', handle_mission_download)
+app.router.add_get('/vineyard.js', handle_vineyard_js)
 app.router.add_get('/automatico.html', handle_autopilota)
 app.router.add_get('/camera/usb1', handle_camera_view)
 app.router.add_get('/camera/usb2', handle_camera_view)
