@@ -1,0 +1,42 @@
+name: terminator-hub
+services:
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: hub
+      POSTGRES_USER: hub
+      POSTGRES_PASSWORD: ${HUB_DB_PASSWORD:?Eseguire prima il setup}
+      HUB_INGEST_PASSWORD: ${HUB_INGEST_PASSWORD:?Eseguire prima il setup}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/10-hub.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U hub -d hub"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  web:
+    build:
+      context: ..
+      dockerfile: hub/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGHOST: db
+      PGDATABASE: hub
+      PGUSER: hub_ingest
+      PGPASSWORD: ${HUB_INGEST_PASSWORD:?Eseguire prima il setup}
+      HUB_DEVICES_JSON: ${HUB_DEVICES_JSON:?Eseguire prima il setup}
+      HUB_STALE_AFTER_SECONDS: ${HUB_STALE_AFTER_SECONDS:-30}
+    ports:
+      - "127.0.0.1:8090:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8080/healthz', timeout=4).close()"]
+      interval: 4s
+      timeout: 5s
+      retries: 10
+volumes:
+  pgdata:

@@ -7,6 +7,7 @@
     
     <script src="https://cdn.tailwindcss.com"></script>
     <script> tailwind.config = { darkMode: 'class', } </script>
+    <script src="runtime-config.js"></script>
     <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
 
     <style>
@@ -43,7 +44,7 @@
             <div>
                 <h2 class="text-lg md:text-xl font-black text-slate-800 dark:text-white">Controllo Analisi Segnale</h2>
                 <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">Mantieni i dispositivi fisicamente fermi. Clicca Avvia per accumulare i dati LIVE.</p>
-                <p class="text-xs text-slate-500 dark:text-slate-400 mt-2">WebSocket: <span id="connection-status" class="font-bold text-amber-500">Connessione in corso…</span> · RTK Rover: <span id="rover-fix-status" class="font-bold">--</span></p>
+                <p class="text-xs text-slate-500 dark:text-slate-400 mt-2"><span id="scatter-source">WebSocket</span> · <span id="connection-status" class="font-bold text-amber-500">Connessione in corso…</span> · RTK Rover: <span id="rover-fix-status" class="font-bold">--</span></p>
             </div>
             
             <div class="flex flex-wrap items-center gap-2 md:gap-4 mt-4 md:mt-0 w-full md:w-auto">
@@ -60,11 +61,16 @@
                     <option value="cm" selected>cm</option>
                     <option value="m">m</option>
                 </select>
+                <button id="btn-scatter-history" type="button" hidden onclick="loadHistory()" class="bg-slate-600 hover:bg-slate-500 text-white font-bold py-3 px-4 rounded-xl whitespace-nowrap">
+                    Ultimi 15 minuti
+                </button>
                 <button id="btn-toggle-analysis" onclick="toggleAnalysis()" class="bg-green-500 hover:bg-green-400 text-white font-black py-3 px-6 rounded-xl transition-all shadow-lg active:scale-95 whitespace-nowrap w-full md:w-auto">
                     ▶ AVVIA
                 </button>
             </div>
         </div>
+
+        <p id="scatter-history-status" role="status" class="text-sm text-slate-500 empty:hidden"></p>
 
         <!-- GRIGLIA GRAFICI -->
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -138,6 +144,11 @@
     </main>
 
     <script>
+        const shared = window.TERMINATOR_CONFIG?.sharedMap === true;
+        const historyButton = document.getElementById('btn-scatter-history');
+        const baseStatus = document.getElementById('base-stream-status');
+        let liveSince = 0;
+        let loadingHistory = false;
         const MAX_POINTS = 3000; 
         const R_EARTH = 6378137.0; 
 
@@ -174,12 +185,15 @@
         function toggleAnalysis() {
             const btn = document.getElementById('btn-toggle-analysis');
             isAnalyzing = !isAnalyzing;
+            historyButton.disabled = isAnalyzing;
             if (isAnalyzing) {
+                document.getElementById('scatter-history-status').textContent = '';
+                liveSince = Date.now() / 1000;
                 roverDataArray = [];
                 baseDataArray = [];
                 lastRoverFixTime = null;
                 lastBaseFixTime = null;
-                document.getElementById('base-stream-status').innerText = 'In attesa di campioni GNSS Base dal server.';
+                if (!shared) baseStatus.innerText = 'In attesa di campioni GNSS Base dal server.';
                 changeScale();
                 btn.innerHTML = '■ STOP';
                 btn.classList.remove('bg-green-500', 'hover:bg-green-400');
@@ -218,6 +232,68 @@
                 const before = baseDataArray.length;
                 collectSample(message.base, {type: 'base', points: baseDataArray, get lastFixTime() { return lastBaseFixTime; }, set lastFixTime(value) { lastBaseFixTime = value; }});
                 if (baseDataArray.length !== before) document.getElementById('base-stream-status').innerText = 'Ricezione campioni GNSS Base attiva.';
+            }
+        }
+
+        async function readHubSamples(windowName) {
+            const response = await fetch('/api/v1/map/scatter?window=' + windowName, {
+                cache: 'no-store', signal: AbortSignal.timeout(5000)
+            });
+            if (!response.ok) throw new Error('HTTP ' + response.status);
+            return response.json();
+        }
+
+        async function pollHub() {
+            const session = liveSince;
+            try {
+                const { rover_id: roverId, samples } = await readHubSamples('live');
+                const latest = samples.at(-1);
+                const recent = latest && Date.now() / 1000 - latest.fix_timestamp <= 30;
+                setConnectionStatus(
+                    roverId ? (recent ? roverId + ' · campioni ricevuti' : roverId + ' · nessun fix recente')
+                        : 'Nessun Rover registrato',
+                    Boolean(recent)
+                );
+                document.getElementById('rover-fix-status').innerText = recent ? latest.rtk_status : '--';
+                if (isAnalyzing && liveSince === session) {
+                    const additions = samples.filter(sample =>
+                        sample.fix_timestamp >= session && sample.fix_timestamp > (lastRoverFixTime ?? 0));
+                    if (additions.length) {
+                        roverDataArray = roverDataArray.concat(additions).slice(-MAX_POINTS);
+                        lastRoverFixTime = additions.at(-1).fix_timestamp;
+                        updateCharts(roverDataArray, 'rover');
+                    }
+                }
+            } catch (error) {
+                setConnectionStatus('Archivio HP non raggiungibile', false);
+                document.getElementById('rover-fix-status').innerText = '--';
+                console.warn(error);
+            } finally {
+                window.setTimeout(pollHub, 5000);
+            }
+        }
+
+        async function loadHistory() {
+            if (isAnalyzing || loadingHistory) return;
+            loadingHistory = true;
+            historyButton.disabled = true;
+            const liveButton = document.getElementById('btn-toggle-analysis');
+            liveButton.disabled = true;
+            const notice = document.getElementById('scatter-history-status');
+            try {
+                const { samples } = await readHubSamples('history');
+                roverDataArray = samples;
+                updateCharts(roverDataArray, 'rover');
+                notice.textContent = samples.length
+                    ? `Storico Rover: ${samples.length} campioni negli ultimi 15 minuti. Interpreta la dispersione solo se il Rover era fermo.`
+                    : 'Nessun campione Rover negli ultimi 15 minuti.';
+            } catch (error) {
+                notice.textContent = 'Impossibile caricare lo storico dall’HP.';
+                console.warn(error);
+            } finally {
+                loadingHistory = false;
+                historyButton.disabled = false;
+                liveButton.disabled = false;
             }
         }
 
@@ -366,7 +442,14 @@
         }
 
         changeScale();
-        connectWebSocket();
+        if (shared) {
+            historyButton.hidden = false;
+            document.getElementById('scatter-source').textContent = 'Archivio HP';
+            baseStatus.textContent = 'L’Hub riceve la posizione di riferimento della Base, che non è una serie di campioni GNSS.';
+            pollHub();
+        } else {
+            connectWebSocket();
+        }
     </script>
 </body>
 </html>

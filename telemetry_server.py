@@ -466,9 +466,14 @@ async def handle_scatter_analysis(request):
 async def handle_runtime_config(request):
     """Expose the non-secret runtime API URL config to the locally hosted UI."""
     config_path = os.path.join(STATIC_DIR, "runtime-config.js")
+    config = "window.TERMINATOR_CONFIG = { apiBaseUrl: '' };"
     if os.path.isfile(config_path):
-        return web.FileResponse(config_path, headers={"Cache-Control": "no-store"})
-    return web.Response(text="window.TERMINATOR_CONFIG = { apiBaseUrl: '' };", content_type="application/javascript")
+        with open(config_path, encoding="utf-8") as config_file:
+            config = config_file.read()
+    hub_url = os.environ.get("ROVER_MAP_HUB_URL", "").strip() or os.environ.get("ROVER_HUB_URL", "").strip()
+    if hub_url:
+        config += "\nwindow.TERMINATOR_CONFIG.hubMapUrl = " + json.dumps(hub_url) + ";"
+    return web.Response(text=config, content_type="application/javascript", headers={"Cache-Control": "no-store"})
 
 
 # --- GESTIONE COMANDI WEBSOCKET ---

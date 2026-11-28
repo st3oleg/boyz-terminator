@@ -117,7 +117,13 @@
                 <span class="block text-base">▦</span>Canc
             </button>
         </div>
-        <p id="geofence-message" class="text-[10px] text-slate-400 mt-2 leading-snug">Configurazione salvata su questo browser. Al momento non limita il movimento del robot.</p>
+        <div class="flex gap-2 mt-2 text-xs">
+            <button id="geofence-export" type="button" class="underline" disabled>Esporta</button>
+            <button id="geofence-import" type="button" class="underline" hidden disabled>Importa su HP</button>
+            <input id="geofence-file" type="file" accept=".geojson,.json" hidden>
+        </div>
+        <p id="geofence-storage" role="status" class="text-[10px] text-slate-300 mt-2"></p>
+        <p id="geofence-message" class="text-[10px] text-slate-400 mt-2 leading-snug">I perimetri della mappa non limitano il movimento del robot.</p>
         <p id="geofence-selection" class="text-[10px] text-amber-300 mt-1 leading-snug">Nessuna area selezionata per la riproduzione.</p>
     </section>
 
@@ -241,7 +247,38 @@
     </div>
 
     <script>
-        // --- GESTIONE PREFERENZE WIDGET (LOCALSTORAGE) ---
+        (async () => {
+        const config = window.TERMINATOR_CONFIG || {};
+        const params = new URLSearchParams(window.location.search);
+        if (!config.sharedMap && config.hubMapUrl && !params.has('locale')) {
+            try {
+                const target = new URL(config.hubMapUrl, window.location.href);
+                if (['https:', 'http:'].includes(target.protocol) && target.origin !== location.origin) {
+                    const response = await fetch(new URL('/api/v1/map/available', target), {
+                        cache: 'no-store', credentials: 'omit', signal: AbortSignal.timeout(2500)
+                    });
+                    if (response.ok && await response.text() === 'terminator-hub-map') {
+                        location.replace(new URL('/index.html', target).href);
+                        return;
+                    }
+                }
+            } catch (error) {
+                console.info('Mappa HP non raggiungibile, apro la mappa locale.', error);
+            }
+        }
+        if (config.sharedMap) {
+            const mapLinks = document.querySelectorAll('a[href$=".html"]');
+            for (const link of mapLinks) {
+                const href = link.getAttribute('href');
+                if (['impostazioni_widgets.html', 'scatter_analysis.html'].includes(href)) continue;
+                if (config.roverOrigin) {
+                    link.href = new URL(href, config.roverOrigin).href;
+                } else {
+                    link.style.display = 'none';
+                }
+            }
+        }
+        // --- VISIBILITA DEI WIDGET ---
         function toggleWidget(id, show) {
             const el = document.getElementById(id);
             if (!el) return;
@@ -252,28 +289,34 @@
             }
         }
 
-        function loadWidgetPreferences() {
-            // Se non è stato impostato esplicitamente a 'false', i widget rover sono true di default
-            const showRovStatus = localStorage.getItem('w_rover_status') !== 'false';
-            const showRovAlt = localStorage.getItem('w_rover_alt') !== 'false';
-            const showRovImu = localStorage.getItem('w_rover_imu') !== 'false';
+        let widgetLoad = 0;
+        async function loadWidgetPreferences() {
+            const currentLoad = ++widgetLoad;
+            try {
+                let preferences = {};
+                if (config.sharedMap) {
+                    const response = await fetch('/api/v1/map/widgets', { signal: AbortSignal.timeout(4000) });
+                    if (!response.ok) throw new Error('HTTP ' + response.status);
+                    preferences = await response.json();
+                }
+                if (currentLoad !== widgetLoad) return;
+                const visible = (key, defaultValue) => config.sharedMap
+                    ? preferences[key] ?? defaultValue
+                    : (localStorage.getItem(key) ?? String(defaultValue)) === 'true';
 
-            toggleWidget('widget-rover-status', showRovStatus);
-            toggleWidget('widget-rover-alt', showRovAlt);
-            toggleWidget('widget-rover-imu', showRovImu);
-
-            // Widget Antenna Base (disattivati di default se null)
-            const showBaseHb = localStorage.getItem('w_base_heartbeat') === 'true';
-            const showBaseCoords = localStorage.getItem('w_base_coords') === 'true';
-
-            toggleWidget('widget-base-heartbeat', showBaseHb);
-            toggleWidget('widget-base-coords', showBaseCoords);
+                toggleWidget('widget-rover-status', visible('w_rover_status', true));
+                toggleWidget('widget-rover-alt', visible('w_rover_alt', true));
+                toggleWidget('widget-rover-imu', visible('w_rover_imu', true));
+                toggleWidget('widget-base-heartbeat', visible('w_base_heartbeat', false));
+                toggleWidget('widget-base-coords', visible('w_base_coords', false));
+            } catch (error) {
+                console.warn('Preferenze widget non disponibili:', error);
+            }
         }
 
-        // Esegui all'avvio e quando la finestra riprende il focus
         loadWidgetPreferences();
         window.addEventListener('focus', loadWidgetPreferences);
-        window.addEventListener('storage', loadWidgetPreferences);
+        if (!config.sharedMap) window.addEventListener('storage', loadWidgetPreferences);
 
         // --- GESTIONE TRASCINAMENTO E RIDIMENSIONAMENTO WIDGET ---
         document.querySelectorAll('.interactive-widget').forEach(widget => {
@@ -425,13 +468,26 @@
             }
         });
 
-        // --- PERIMETRI VIRTUALI (salvati sul browser della console) ---
+        // --- PERIMETRI VIRTUALI ---
         const geofenceLayers = new L.FeatureGroup().addTo(map);
         const geofenceStyle = { color: '#3b82f6', fillColor: '#3b82f6', fillOpacity: 0.25, weight: 3 };
         const selectedGeofenceStyle = { color: '#f59e0b', fillColor: '#f59e0b', fillOpacity: 0.3, weight: 4 };
         const geofenceStorageKey = 'terminator_zones_geojson';
         const selectedGeofenceKey = 'terminator_selected_geofence_id';
-        let selectedGeofenceId = localStorage.getItem(selectedGeofenceKey) || null;
+        let selectedGeofenceId = null;
+        let revision = null;
+        let saveQueue = Promise.resolve();
+        let saveFailed = false;
+        const storageStatus = document.getElementById('geofence-storage');
+        const exportButton = document.getElementById('geofence-export');
+        const importButton = document.getElementById('geofence-import');
+        const importFile = document.getElementById('geofence-file');
+        const editButtons = ['draw', 'edit', 'delete'].map(action => document.getElementById('btn-geofence-' + action));
+        if (config.sharedMap) {
+            importButton.hidden = false;
+            document.getElementById('geofence-selection').innerText = '';
+            editButtons.forEach(button => { button.disabled = true; });
+        }
         document.getElementById('geofence-widget').addEventListener('click', (event) => event.stopPropagation());
         map.pm.setGlobalOptions({ layerGroup: geofenceLayers, snappable: true, snapDistance: 20 });
         map.pm.setPathOptions(geofenceStyle);
@@ -451,8 +507,8 @@
             if (!layer._replaySelectionHandler) {
                 layer.on('click', () => {
                     selectedGeofenceId = layer.feature.properties.replay_id;
-                    saveGeofences();
-                    document.getElementById('geofence-message').innerText = 'Area selezionata per la riproduzione.';
+                    syncGeofenceSelection();
+                    document.getElementById('geofence-message').innerText = config.sharedMap ? 'Area evidenziata.' : 'Area selezionata per la riproduzione.';
                 });
                 layer._replaySelectionHandler = true;
             }
@@ -470,9 +526,17 @@
                 layer.setStyle(layer.feature?.properties?.replay_id === selectedGeofenceId
                     ? selectedGeofenceStyle : geofenceStyle);
             });
-            if (selectedGeofenceId) localStorage.setItem(selectedGeofenceKey, selectedGeofenceId);
-            else localStorage.removeItem(selectedGeofenceKey);
+            if (!config.sharedMap) {
+                if (selectedGeofenceId) localStorage.setItem(selectedGeofenceKey, selectedGeofenceId);
+                else localStorage.removeItem(selectedGeofenceKey);
+            }
             const selectedIndex = ids.indexOf(selectedGeofenceId);
+            if (config.sharedMap) {
+                document.getElementById('geofence-selection').innerText = selectedIndex >= 0
+                    ? `Area ${selectedIndex + 1} evidenziata.`
+                    : layers.length ? 'Clicca un perimetro per evidenziare un’area.' : '';
+                return;
+            }
             document.getElementById('geofence-selection').innerText = selectedIndex >= 0
                 ? `Area ${selectedIndex + 1} selezionata per la riproduzione (bordo arancione).`
                 : selectable.length ? 'Clicca un’area sulla mappa per selezionarla per la riproduzione.'
@@ -481,15 +545,95 @@
         }
 
         function saveGeofences() {
-            try {
-                syncGeofenceSelection();
-                localStorage.setItem(geofenceStorageKey, JSON.stringify(geofenceLayers.toGeoJSON()));
-                updateGeofenceCount();
-            } catch (error) {
-                document.getElementById('geofence-message').innerText = 'Impossibile salvare i perimetri in questo browser.';
-                console.error('Salvataggio perimetri non riuscito:', error);
+            syncGeofenceSelection();
+            updateGeofenceCount();
+            const collection = geofenceLayers.toGeoJSON();
+            if (!config.sharedMap) {
+                try {
+                    localStorage.setItem(geofenceStorageKey, JSON.stringify(collection));
+                    storageStatus.innerText = 'Perimetri salvati in questo browser.';
+                } catch (error) {
+                    storageStatus.innerText = 'Salvataggio locale non riuscito.';
+                    console.error(error);
+                }
+                return;
             }
+            if (revision === null || saveFailed) return;
+            storageStatus.innerText = 'Salvataggio su HP…';
+            saveQueue = saveQueue.then(async () => {
+                if (saveFailed) return;
+                try {
+                    const response = await fetch('/api/v1/map/perimeters', {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json', 'X-Map-Action': 'save-perimeters' },
+                        body: JSON.stringify({ revision, collection }),
+                        signal: AbortSignal.timeout(5000)
+                    });
+                    if (response.status === 409) {
+                        throw new Error('Un altro browser ha modificato i perimetri. Esporta le tue modifiche prima di ricaricare.');
+                    }
+                    if (!response.ok) {
+                        throw new Error('Salvataggio su HP non riuscito. Esporta le modifiche prima di ricaricare.');
+                    }
+                    revision = (await response.json()).revision;
+                    storageStatus.innerText = 'Perimetri salvati su HP.';
+                } catch (error) {
+                    saveFailed = true;
+                    storageStatus.innerText = error instanceof TypeError || error.name === 'TimeoutError'
+                        ? 'Connessione con HP interrotta. Esporta le modifiche prima di ricaricare.'
+                        : error.message;
+                    [...editButtons, importButton].forEach(button => { button.disabled = true; });
+                }
+            });
         }
+
+        function loadCollection(collection) {
+            L.geoJSON(collection, {
+                filter: feature => ['Polygon', 'MultiPolygon'].includes(feature.geometry?.type),
+                style: geofenceStyle
+            }).eachLayer(layer => geofenceLayers.addLayer(layer));
+        }
+
+        exportButton.addEventListener('click', () => {
+            const blob = new Blob([JSON.stringify(geofenceLayers.toGeoJSON())], { type: 'application/geo+json' });
+            const url = URL.createObjectURL(blob);
+            const download = document.createElement('a');
+            download.href = url;
+            download.download = 'perimetri-terminator.geojson';
+            download.click();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+        });
+
+        importButton.addEventListener('click', () => importFile.click());
+        importFile.addEventListener('change', async () => {
+            const file = importFile.files[0];
+            importFile.value = '';
+            if (!file || saveFailed) return;
+            try {
+                const imported = JSON.parse(await file.text());
+                if (imported.type !== 'FeatureCollection' || !Array.isArray(imported.features)) {
+                    throw new Error('File GeoJSON non valido.');
+                }
+                const seen = new Set(geofenceLayers.toGeoJSON().features.map(feature => JSON.stringify(feature.geometry)));
+                const additions = imported.features.filter(feature => {
+                    if (!['Polygon', 'MultiPolygon'].includes(feature?.geometry?.type)) return false;
+                    const geometry = JSON.stringify(feature.geometry);
+                    if (seen.has(geometry)) return false;
+                    seen.add(geometry);
+                    return true;
+                }).map(feature => ({ type: 'Feature', geometry: feature.geometry, properties: {} }));
+                if (!additions.length) {
+                    storageStatus.innerText = 'Nessun nuovo perimetro da importare.';
+                    return;
+                }
+                if (saveFailed) return;
+                loadCollection({ type: 'FeatureCollection', features: additions });
+                saveGeofences();
+            } catch (error) {
+                storageStatus.innerText = 'Importazione dei perimetri non riuscita.';
+                console.error(error);
+            }
+        });
 
         document.getElementById('btn-geofence-draw').addEventListener('click', () => {
             map.pm.enableDraw('Polygon', { snappable: true, snapDistance: 20, pathOptions: geofenceStyle });
@@ -508,33 +652,47 @@
             if (!geofenceLayers.hasLayer(event.layer)) geofenceLayers.addLayer(event.layer);
             selectedGeofenceId = ensureGeofenceId(event.layer);
             saveGeofences();
-            document.getElementById('geofence-message').innerText = 'Perimetro salvato su questo browser.';
+            document.getElementById('geofence-message').innerText = 'Perimetro aggiunto.';
         });
         map.on('pm:remove', saveGeofences);
         map.on('pm:globaleditmodetoggled', (event) => {
             if (!event.enabled) {
                 saveGeofences();
-                document.getElementById('geofence-message').innerText = 'Modifiche ai perimetri salvate.';
+                document.getElementById('geofence-message').innerText = 'Modifica dei vertici terminata.';
             }
         });
 
-        let geofenceLoadFailed = false;
-        try {
-            const savedGeofences = localStorage.getItem(geofenceStorageKey);
-            if (savedGeofences) {
-                const parsedGeofences = JSON.parse(savedGeofences);
-                L.geoJSON(parsedGeofences, {
-                    filter: (feature) => feature.geometry?.type === 'Polygon' || feature.geometry?.type === 'MultiPolygon',
-                    style: geofenceStyle
-                }).eachLayer((layer) => geofenceLayers.addLayer(layer));
+        async function loadGeofences() {
+            try {
+                if (config.sharedMap) {
+                    storageStatus.innerText = 'Caricamento dei perimetri da HP…';
+                    const response = await fetch('/api/v1/map/perimeters', { signal: AbortSignal.timeout(5000) });
+                    if (!response.ok) throw new Error('HTTP ' + response.status);
+                    const data = await response.json();
+                    loadCollection(data.collection);
+                    revision = data.revision;
+                    storageStatus.innerText = 'Archivio condiviso su HP.';
+                    [...editButtons, importButton].forEach(button => { button.disabled = false; });
+                } else {
+                    selectedGeofenceId = localStorage.getItem(selectedGeofenceKey);
+                    const raw = localStorage.getItem(geofenceStorageKey);
+                    if (raw) {
+                        loadCollection(JSON.parse(raw));
+                        saveGeofences();
+                    }
+                    storageStatus.innerText = 'Archivio locale in questo browser.';
+                }
+                exportButton.disabled = false;
+                syncGeofenceSelection();
+            } catch (error) {
+                storageStatus.innerText = config.sharedMap
+                    ? 'Impossibile leggere i perimetri su HP. Ricarica per riprovare.'
+                    : 'Perimetri locali non leggibili.';
+                console.error(error);
             }
-        } catch (error) {
-            geofenceLoadFailed = true;
-            document.getElementById('geofence-message').innerText = 'Perimetri salvati non leggibili; ridisegna le aree.';
-            console.error('Caricamento perimetri non riuscito:', error);
+            updateGeofenceCount();
         }
-        if (geofenceLoadFailed) updateGeofenceCount();
-        else saveGeofences();
+        loadGeofences();
 
         // Marker GCS
         let gcsMarker = null;
@@ -666,33 +824,43 @@
         }
 
         function connectWebSocket() {
-            const configuredApi = (window.TERMINATOR_CONFIG?.apiBaseUrl || '').replace(/\/+$/, '');
-            if (configuredApi) {
+            const configuredApi = (config.apiBaseUrl || '').replace(/\/+$/, '');
+            if (config.sharedMap || configuredApi) {
                 const pollBaseApi = async () => {
                     try {
-                        const response = await fetch(`${configuredApi}/api/state`, { cache: 'no-store' });
+                        const response = await fetch(config.sharedMap ? '/api/v1/map/state' : `${configuredApi}/api/state`, {
+                            cache: 'no-store', signal: AbortSignal.timeout(4000)
+                        });
                         if (!response.ok) throw new Error(`HTTP ${response.status}`);
                         aggiornaTelemetria(await response.json());
                     } catch (error) {
                         const status = document.getElementById('rtk-status-display');
-                        status.innerText = 'API BASE OFFLINE';
+                        status.innerText = config.sharedMap ? 'HUB OFFLINE' : 'API BASE OFFLINE';
                         document.getElementById('rtk-color-dot').className = 'w-3.5 h-3.5 rounded-full bg-slate-400 dark:bg-slate-500 shadow-inner';
                         aggiornaHeartbeatBase(null, false);
                         if (isRoverVisible) {
                             roverMarker.setStyle({ fillColor: '#78909c', fillOpacity: 0.72 });
-                            roverMarker.setPopupContent('<b>Ultima posizione nota</b><br>API Base non raggiungibile');
+                            roverMarker.setPopupContent('<b>Ultima posizione nota</b><br>' + (config.sharedMap ? 'Hub non raggiungibile' : 'API Base non raggiungibile'));
                         }
                         console.warn('API Base non raggiungibile:', error);
                     }
                 };
-                pollBaseApi();
-                setInterval(pollBaseApi, 1000);
+                async function poll() {
+                    await pollBaseApi();
+                    setTimeout(poll, config.sharedMap ? 5000 : 1000);
+                }
+                poll();
                 return;
             }
 
             const loc = window.location;
             const wsProtocol = loc.protocol === 'https:' ? 'wss://' : 'ws://';
-            const ws = new WebSocket(`${wsProtocol}${loc.host}/ws`);
+            const fallbackWs = config.roverWsUrl || (loc.host ? `${wsProtocol}${loc.host}/ws` : '');
+            if (!fallbackWs) {
+                document.getElementById('rtk-status-display').innerText = 'TELEMETRIA NON CONFIGURATA';
+                return;
+            }
+            const ws = new WebSocket(fallbackWs);
             ws.onmessage = (event) => {
                 try { aggiornaTelemetria(JSON.parse(event.data)); }
                 catch (error) { console.error('Errore frame:', error); }
@@ -710,6 +878,7 @@
 
         selectDevice('ROVER');
         connectWebSocket();
+        })();
     </script>
 </body>
 </html>

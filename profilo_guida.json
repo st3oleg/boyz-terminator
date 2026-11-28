@@ -1,0 +1,19 @@
+{
+  "wheels_verified": true,
+  "physical_estop_verified": true,
+  "imu_yaw_sign": 1,
+  "cruise_mps": 0.27,
+  "max_speed_mps": 0.50,
+  "clearance_m": 2.0,
+  "motor_calibration": {
+    "track_width_m": 0.68,
+    "left_curve": [[0.0, 0], [0.0835, 30], [0.3390, 50]],
+    "right_curve": [[0.0, 0], [0.0835, 30], [0.3302, 50]],
+    "max_pct": 50,
+    "ramp_pct_per_s": 20
+  },
+  "calibration_sources": {
+    "pwm_30": "30trattino30_1795449307.json",
+    "pwm_50": "50trattino50_1795449400.json"
+  }
+}

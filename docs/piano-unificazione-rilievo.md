@@ -1,6 +1,6 @@
 # Piano di unificazione GCS / Rover / Base RTK
 
-**Stato:** analisi e piano preliminare, in attesa di approvazione. Nessuna modifica al codice, alle schede Raspberry o a Supabase è inclusa.
+**Stato:** piano preliminare storico, riferito al checkout esaminato prima dell'aggiunta del client RTCM, dell'anteprima della traccia e del controllore da terminale. La sezione «architettura osservabile» sotto conserva quella fotografia; per il software attuale vedere [Analisi del codice](analisi-codice.md) e [Riproduzione traccia](riproduzione-traccia.md). La nuova direzione per l'archivio è il [PC Ubuntu](hub-ubuntu.md) al posto di Supabase. Nessuna modifica al codice, alle schede Raspberry o a Supabase fa parte di questo piano.
 
 ## 1. Perimetro e qualità delle evidenze
 

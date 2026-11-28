@@ -1,18 +1,18 @@
 # Analisi dei gap: visione, LiDAR e fusione sensori
 
-Aggiornamento del 23 novembre 2026, dalle informazioni fornite in chat. Questo documento raccoglie requisiti e proposte: non descrive funzioni già implementate né risultati di prove sul campo.
+Aggiornamento del 24 novembre 2026, dalle informazioni fornite in chat e dal codice locale. Questo documento raccoglie soprattutto requisiti e proposte; il controllore sperimentale descritto sotto non costituisce una prova completa sul campo.
 
 ## Configurazione riferita
 
 - Rover con Raspberry Pi 4, GPS RTK LC29H-DA e IMU. Il LiDAR 2D COIN-D6 è circa 17 cm sopra il rover, alto 57 cm: il suo piano di scansione è quindi a circa **74 cm dal terreno**.
 - Due videocamere USB Emeet sono circa 3 cm sotto il piano LiDAR, indicativamente a 71 cm da terra: una guarda avanti e una indietro. Campo visivo e inclinazione effettivi sono da misurare.
 - Una terza camera CSI OV5647 è su un braccetto regolabile manualmente con viti; la posizione definitiva è ancora da scegliere.
-- Gli encoder ruota sono disponibili a magazzino ma non montati. Le ruote slittano spesso sul terreno bagnato e anche fra cerchione e copertone.
+- Gli encoder ruota sono disponibili a magazzino ma non montati. Prima della riparazione era stato riferito slittamento fra cerchione e copertone; dopo la riparazione restano da quantificare lo slittamento sul fondo e la ripetibilità della trazione.
 - Per ora non è previsto un apparato di taglio. L'ambito iniziale della visione è diurno, con terreno visibile e persona non nascosta; erba alta, persone parzialmente nascoste e lavoro notturno non sono attualmente coperti.
 
 ## Stato e obiettivi
 
-Il server Rover trasmette video e telemetria GPS/IMU; esistono programmi di prova separati per camere e LiDAR. La registrazione GPS avviata dall'interfaccia viene mantenuta in memoria durante la sessione e salvata all'arresto come JSON in `/home/terminator/Documents/missions/`. La guida autonoma reale, il monitor ostacoli integrato, la mappa LiDAR persistente e una protezione indipendente delle persone restano da realizzare o verificare. La geometria Pure Pursuit esiste e viene utilizzata anche in simulazione; non costituisce di per sé una guida autonoma validata sul rover.
+Il server Rover trasmette video e telemetria GPS/IMU; esistono programmi di prova separati per camere e LiDAR. La registrazione GPS avviata dall'interfaccia viene mantenuta in memoria durante la sessione e salvata all'arresto come JSON in `/home/terminator/Documents/missions/`. Il controllore da terminale usa Pure Pursuit per una tratta supervisionata, ma la corsa completa sul Rover fisico non è confermata. Monitor ostacoli integrato, mappa LiDAR persistente e protezione indipendente delle persone restano da realizzare o verificare.
 
 Obiettivi richiesti: riconoscere il profilo dei filari e aiutare la centratura; riconoscere persone, comprese persone ferme e distese; mostrare riquadri e punteggi di riconoscimento in una pagina di configurazione; costruire una mappa 2D LiDAR con strutture persistenti; associare dati dei sensori e mostrare avvisi all'operatore.
 

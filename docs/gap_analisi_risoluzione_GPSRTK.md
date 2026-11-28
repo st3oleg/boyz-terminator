@@ -1,7 +1,8 @@
 # Analisi e verifica GPS RTK
 
-**Aggiornato:** 16 novembre 2026  
-**Scopo:** ripetere la verifica della catena Base → RTCM → Rover → ricevitore GNSS prima di collegare o provare sul veicolo la guida Pure Pursuit.
+**Aggiornato:** 24 novembre 2026
+
+**Scopo:** ripetere la verifica della catena Base → RTCM → Rover → ricevitore GNSS prima di una corsa di prova con il controllore Pure Pursuit da terminale. Il codice del controllore è presente, ma la corsa completa sul Rover fisico non è confermata.
 
 ## Configurazione osservata
 
@@ -29,7 +30,7 @@ Queste prove dimostrano la ricezione di correzioni RTCM valide e un RTK FIX ripo
 
 La missione `missions/Fix_1.json` contiene 86 punti segnalati dall'utente come acquisiti tutti in `FIX`. È stata copiata in `webots/controllers/rover_bridge/missions/Fix_1.json` per una simulazione offline con GPS/IMU e motori Webots. Nella simulazione l'etichetta FIX della traccia rappresenta disponibilità di correzioni: Webots non riceve RTCM binario né parla NTRIP.
 
-La traccia precede il salvataggio delle potenze motore e quindi non è utilizzabile per stimare la curva comando/velocità. Per quella misurazione serve una nuova traccia con i campi motore, trim zero e intervalli rettilinei stabili; vedere [Calibrazione motori e dati delle tracce](calibrazione-motori-e-tracce.md). Il modulo Pure Pursuit condiviso calcola geometria, mentre il controller Webots adatta i risultati agli attuatori simulati; questa non è ancora l'integrazione hardware sul Rover. I dettagli operativi e i log della simulazione sono nel [README Webots](../../webots/README.md).
+La traccia precede il salvataggio delle potenze motore e quindi non è utilizzabile per stimare la curva comando/velocità. Le nuove prove con campi motore e trim zero sono descritte in [Calibrazione motori e dati delle tracce](calibrazione-motori-e-tracce.md). Il modulo Pure Pursuit condiviso calcola la geometria; Webots usa attuatori simulati, mentre `modules/follow_route.py` passa comandi sperimentali al driver reale in una prova supervisionata. I dettagli operativi della simulazione sono nel [README Webots](../../webots/README.md).
 
 ## Nota importante su NTRIP
 
@@ -97,7 +98,7 @@ Per ripetere la verifica CRC e il conteggio per tipo RTCM, usare lo script/one-l
 
 ### 5. Test seriale GNSS/RTCM sul Rover
 
-Prima accertarsi che nessun altro processo stia usando la porta. Avviare il test manuale già predisposto dall'utente:
+Prima accertarsi che nessun altro processo stia usando la porta. Il comando seguente usa un test manuale citato nelle prove precedenti, ma `tests/test_rtk_serial_link.py` **non è incluso in questo repository**: verificarne la presenza sul Raspberry prima di eseguirlo.
 
 ```bash
 sudo fuser -v /dev/ttyS0
@@ -114,6 +115,36 @@ Tenere il Rover fermo, antenna con cielo libero e test in esecuzione. Lasciare o
 
 Se la porta è occupata, individuare il processo prima di terminare servizi. Non eseguire il server completo del rover solo per questo controllo se non è necessario: può inizializzare altri sottosistemi, inclusi i motori.
 
+### 6. Diagnostica con lo script incluso nel repository
+
+Con il Rover fermo, chiudi l'eventuale server avviato a mano. Lascia la Base accesa. Sul Raspberry Rover ferma socket e servizio per liberare la seriale, poi avvia la cattura.
+
+```bash
+cd /home/terminator/Documents &&
+sudo systemctl stop terminator-rover.socket terminator-rover.service &&
+python3 tools/diagnose_gnss.py --base 100.85.248.82 --seconds 180
+```
+
+Lo script usa lo stesso lettore GNSS e client RTCM del server. Le correzioni continuano ad arrivare al ricevitore durante la cattura. La pagina del Rover resta offline e il report JSON viene stampato alla fine. Per ripristinare l'apertura dall'Hub, esegui `sudo systemctl start terminator-rover.socket`.
+
+| Campo | Come usarlo |
+| --- | --- |
+| `gga_quality_4_fix_5_float`, `gga_hdop_median` | Contano gli stati riportati dal ricevitore e riassumono la geometria orizzontale. |
+| `rtcm_transport`, `rtcm_message_counts` | Mostrano byte scritti sulla seriale, freschezza a fine cattura e presenza di riferimento 1005 e osservazioni MSM. |
+| `gga_differential_station_reported`, `gga_differential_age_reported`, `rtcm_station_ids` | Confronta la stazione e l'età differenziale dichiarate dal ricevitore con l'ID RTCM. Campi GGA assenti lasciano il controllo inconcludente. |
+| `gsa_used_latest`, `gsv_cn0_dbhz`, `rtcm_msm_satellite_slots_latest` | Confronta i satelliti usati dal Rover con gli slot RTCM e osserva il livello dei segnali sul Rover. ID NMEA e slot RTCM possono seguire numerazioni diverse. |
+| `rtcm_msm4_by_message_and_signal_id` | Riassume intensità del segnale, fase mancante e flag di mezzo ciclo nei messaggi della Base. |
+| `rtcm_msm4_phase_by_satellite` | Indica se le anomalie si concentrano su pochi satelliti. Il contatore dei cali di aggancio confronta due frame consecutivi dello stesso tipo, per la stessa stazione, satellite e segnale, quando entrambi riportano fase. Un calo è un indizio di discontinuità. |
+
+La lettura per satellite è stata verificata con frame simulati. Il collaudo sul Raspberry di questo blocco resta da eseguire.
+
+## Verifica del 27 novembre 2026
+
+- Durante il FLOAT sono arrivati RTCM 1005 e MSM4. Il ricevitore Rover riportava correzioni di 1–2 s e stazione `3335`, lo stesso ID presente nei frame RTCM.
+- Il FLOAT si è ripresentato con il server precedente avviato da terminale. Una prova in un punto più aperto è rimasta in FLOAT per tutti i 120 campioni. La causa del FLOAT persistente in quelle prove resta indeterminata.
+- Dopo la reinstallazione e l'attivazione del socket, il server aggiornato si è avviato alla richiesta della pagina. L'operatore ha confermato un FIX stabile per diversi minuti e il ritorno al FIX dopo la prova di avvio dall'Hub. La prova riguardava il riavvio del servizio con il Rover fermo.
+- Scatter Analysis mostrava 267 campioni Rover, CEP di 1,1 cm e 2DRMS di 2,7 cm, con i grafici in centimetri. Questi valori descrivono la dispersione intorno al centro della serie. L'accuratezza assoluta richiede una misura su un punto noto.
+
 ## Interpretazione rapida
 
 | Evidenza | Che cosa dimostra | Che cosa non dimostra |
@@ -124,7 +155,7 @@ Se la porta è occupata, individuare il processo prima di terminare servizi. Non
 | `byte_scritti` sale e correzioni fresche | I byte vengono inoltrati alla seriale Rover | Accuratezza assoluta della posizione |
 | `GNSS=FIX` stabile | Il ricevitore dichiara RTK fixed | Accuratezza verificata o comportamento affidabile in movimento |
 
-## Verifiche ancora necessarie prima di usare Pure Pursuit sul veicolo
+## Verifiche ancora necessarie per validare Pure Pursuit sul veicolo
 
 - Provare la posizione Rover su un punto di coordinate note e misurare errore e ripetibilità.
 - Registrare una sessione più lunga, includendo eventuale perdita/ripristino rete e passaggio FIX/FLOAT.

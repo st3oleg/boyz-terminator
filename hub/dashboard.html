@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="it">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hub dispositivi</title>
+<style>
+  :root { color-scheme: dark; font: 16px/1.5 system-ui, sans-serif; background: #111a20; color: #eef4f6; }
+  main { max-width: 65rem; margin: auto; padding: 2rem 1rem; }
+  h1 { margin: 0; font-size: clamp(2rem, 5vw, 3.3rem); }
+  #devices { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr)); gap: 1rem; }
+  article { background: #1b2930; border: 1px solid #3c5159; border-radius: .7rem; padding: 1rem; overflow-wrap: anywhere; }
+  h2 { margin: 0; font-size: 1.3rem; }
+  p { color: #c3d4dc; }
+  .online { color: #8ff1bd; }
+  .offline, #status[data-error] { color: #ffcd9b; }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: .3rem .8rem; margin-bottom: 0; }
+  dd { margin: 0; }
+</style>
+<main>
+  <h1>Hub dispositivi</h1>
+  <p id="status" role="status">Caricamento…</p>
+  <section id="devices" aria-label="Dispositivi"></section>
+  <noscript>Attiva JavaScript per aggiornare lo stato dei dispositivi.</noscript>
+</main>
+<script>
+const status = document.querySelector('#status');
+const devices = document.querySelector('#devices');
+const time = value => value ? new Date(value).toLocaleString('it-IT') : '—';
+
+function element(tag, text) {
+  const node = document.createElement(tag);
+  node.textContent = text;
+  return node;
+}
+
+function render(device) {
+  const card = document.createElement('article');
+  const title = element('h2', device.device_id);
+  const simulated = device.event?.payload?.simulated === true || device.device_id.startsWith('demo-');
+  const type = { rover: 'Rover', base: 'Base RTK' }[device.device_type] ?? device.device_type;
+  const summary = element('p', `${type}${simulated ? ' · Simulato' : ''} · ${device.online ? 'Online' : device.received_at ? 'Offline' : 'In attesa di dati'}`);
+  summary.className = device.online ? 'online' : 'offline';
+  const details = document.createElement('dl');
+  const payload = device.event?.payload;
+  const rows = [
+    ['Ricezione', time(device.received_at)],
+    ['Età alla lettura', device.age_seconds == null ? '—' : `${device.age_seconds} s`],
+    ['Ora misura', time(device.event?.observed_at)],
+    ['Evento', device.event?.event_type ?? '—'],
+    ['GNSS', typeof payload?.gnss?.rtk_status === 'string' ? payload.gnss.rtk_status : '—'],
+    ['RTCM', typeof payload?.rtcm?.connected === 'boolean' ? (payload.rtcm.connected ? 'Connesso' : 'Disconnesso') : '—'],
+  ];
+  for (const [label, value] of rows) {
+    details.append(element('dt', label), element('dd', value));
+  }
+  card.append(title, summary, details);
+  return card;
+}
+
+async function refresh() {
+  try {
+    const response = await fetch('/api/v1/devices', { signal: AbortSignal.timeout(8000) });
+    if (!response.ok) throw new Error('Hub non raggiungibile');
+    const report = await response.json();
+    devices.replaceChildren(...report.devices.map(render));
+    delete status.dataset.error;
+    status.textContent = `Ultimo aggiornamento ${time(Date.now())} · soglia offline ${report.stale_after_seconds} s`;
+  } catch {
+    devices.replaceChildren();
+    status.dataset.error = '';
+    status.textContent = 'Impossibile leggere lo stato dei dispositivi. Nuovo tentativo tra 5 secondi.';
+  } finally {
+    setTimeout(refresh, 5000);
+  }
+}
+refresh();
+</script>
+</html>

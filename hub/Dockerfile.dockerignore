@@ -1,0 +1,8 @@
+**
+!hub/
+!hub/Dockerfile
+!hub/requirements.txt
+!hub/app.py
+!hub/dashboard.html
+!schemas/
+!schemas/hub-event-v1.schema.json

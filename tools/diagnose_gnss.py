@@ -69,6 +69,8 @@ class GNSSReport:
         self.rtcm_station_ids = {}
         self.rtcm_satellites = {}
         self.msm4_signals = {}
+        self.msm4_phase_by_satellite = {}
+        self.last_msm4_lock = {}
         self.buffer = bytearray()
 
     def read_nmea(self, line):
@@ -127,9 +129,10 @@ class GNSSReport:
                 satellites = [sat for sat in range(1, 65) if mask & (1 << (64 - sat))]
                 self.rtcm_satellites[kind] = satellites
                 if kind % 10 == 4:
-                    self.read_msm4(kind, payload, satellites)
+                    self.read_msm4(kind, payload, satellites, station_id)
 
-    def read_msm4(self, kind, payload, satellites):
+    def read_msm4(self, kind, payload, satellites, station_id):
+        frame_number = self.rtcm_types[kind]
         for satellite, signal, cn0, phase_valid, lock, half_cycle in msm4_observations(payload, satellites):
             key = f"{kind}/{signal}"
             stats = self.msm4_signals.setdefault(key, {
@@ -137,12 +140,26 @@ class GNSSReport:
                 "lock_indicator_zero": 0, "half_cycle_flag": 0,
             })
             stats["cn0"].append(cn0)
+            by_satellite = self.msm4_phase_by_satellite.setdefault(key, {})
+            phase = by_satellite.setdefault(satellite, {
+                "observations": 0, "missing_phase": 0, "half_cycle_flag": 0,
+                "lock_indicator_zero": 0, "lock_decreases_adjacent_frames": 0,
+            })
+            phase["observations"] += 1
+            lock_key = (station_id, kind, signal, satellite)
             if phase_valid:
+                previous = self.last_msm4_lock.get(lock_key)
+                if previous is not None and previous[0] == frame_number - 1:
+                    phase["lock_decreases_adjacent_frames"] += lock < previous[1]
+                self.last_msm4_lock[lock_key] = (frame_number, lock)
+                phase["half_cycle_flag"] += half_cycle
+                phase["lock_indicator_zero"] += lock == 0
                 stats["phase_satellite_slots"].add(satellite)
                 stats["lock_indicator_zero"] += lock == 0
                 stats["half_cycle_flag"] += half_cycle
             else:
                 stats["missing_phase"] += 1
+                phase["missing_phase"] += 1
 
     def summary(self, rtcm):
         return {
@@ -163,6 +180,10 @@ class GNSSReport:
                 kind: dict(counts) for kind, counts in sorted(self.rtcm_station_ids.items())
             },
             "rtcm_msm_satellite_slots_latest": self.rtcm_satellites,
+            "rtcm_msm4_phase_by_satellite": {
+                key: dict(sorted(satellites.items()))
+                for key, satellites in sorted(self.msm4_phase_by_satellite.items())
+            },
             "rtcm_msm4_by_message_and_signal_id": {
                 key: {
                     "observations": len(stats["cn0"]),

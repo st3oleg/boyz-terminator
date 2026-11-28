@@ -26,6 +26,23 @@ Lascia aperto il terminale mentre usi il Rover. Per arrestare il server, premi `
 
 Sostituisci `<IP_DEL_RASPBERRY>` con l'indirizzo LAN o Tailscale effettivo. Il pulsante **Autopilota** nell'index apre `autopilota.html`.
 
+## Avvio su richiesta dall'Hub
+
+Il pulsante **Apri la pagina del Rover** in **Hub dispositivi** attende la risposta del Rover e apre l'interfaccia. La prima connessione alla porta `8080` sull'indirizzo Tailscale del Rover avvia il servizio. L'HP e il browser devono poter raggiungere il Rover via Tailscale.
+
+Dopo il pull, installa e abilita le unità sul Raspberry del Rover. Esegui l'operazione a Rover fermo, dopo aver chiuso eventuali istanze precedenti che occupano la porta.
+
+```bash
+cd /home/terminator/Documents &&
+sudo install -m 644 deploy/systemd/terminator-rover.{socket,service} /etc/systemd/system/ &&
+sudo systemctl daemon-reload &&
+sudo systemctl enable --now terminator-rover.socket
+```
+
+Prima della prima richiesta è normale che `terminator-rover.socket` sia `active` e `terminator-rover.service` sia `inactive`. Un `git pull` aggiorna i file nel clone. Se systemd risponde `Unit ... not found`, esegui l'installazione indicata sopra. Per ripristinare l'avvio dopo una prova diagnostica, usa `sudo systemctl start terminator-rover.socket`.
+
+Il 27 novembre 2026 l'operatore ha confermato l'avvio dall'Hub e il FIX con il Rover fermo. I dettagli sono nella [diagnostica RTK](docs/gap_analisi_risoluzione_GPSRTK.md#verifica-del-27-novembre-2026).
+
 ## Aggiornamento della pagina nel browser
 
 In Chrome su Windows, usa `Ctrl+Shift+F5`, `Ctrl+Shift+R` oppure `Ctrl+F5` per ricaricare la pagina ignorando la cache. Puoi farlo dopo aver aggiornato i file HTML sul Raspberry.
@@ -41,6 +58,12 @@ BASE_TAILSCALE_HOST=100.85.248.82 python3 -u /home/terminator/Documents/telemetr
 Se la Base non risponde o non ha coordinate valide, la mappa nasconde il marker. Le installazioni con `BASE_LAT` e `BASE_LON` già impostate usano quei valori come riserva. La posizione di riferimento non alimenta i campioni GNSS in Scatter Analysis.
 
 Lo stato mostrato in mappa riflette la qualità NMEA ricevuta dal rover. `SINGLE` significa soluzione autonoma senza RTK; `FIX` richiede una soluzione RTK fixed dal ricevitore e correzioni funzionanti.
+
+## Scatter Analysis
+
+Apri `/scatter_analysis.html` sul Rover. Con il veicolo fermo, premi **Avvia** e osserva lo stato RTK durante la raccolta. Il selettore accanto al raggio offre **mm**, **cm** e **m**, con **cm** all'apertura. Cambiando unità, si aggiornano assi, grafici e metriche CEP e 2DRMS. Il raggio fisico e i campioni raccolti si conservano.
+
+CEP e 2DRMS descrivono la dispersione dei punti rispetto al centro della serie. Per una prova in FIX, avvia la raccolta quando il ricevitore mostra FIX e verifica che lo stato rimanga stabile. Il grafico Base richiede fix con timestamp e resta vuoto se il Rover riceve solo la posizione di riferimento.
 
 ## Trim e curva di calibrazione motori
 
@@ -123,9 +146,9 @@ I test hardware non sono avviati automaticamente dal server Rover. Avviali solo 
 
 ## Integrazione RTK Base / Rover
 
-Il codice locale per client RTCM Rover, uplink API, archivio Base e frontend statico configurabile è stato aggiunto; non è ancora stato installato o verificato sui Raspberry. Lo stato verificato, i gap residui e la procedura sono in [docs/architettura-rtk-base-rover.md](docs/architettura-rtk-base-rover.md).
+Sul Raspberry Rover sono stati verificati la ricezione RTCM, il FIX da fermo, il marker ottenuto da `/api/state` e l'avvio su richiesta dall'Hub. L'architettura e le attività ancora da verificare sono descritte nella [guida RTK Base / Rover](docs/architettura-rtk-base-rover.md).
 
-L'[hub su PC Ubuntu](docs/hub-ubuntu.md) conserva i dati dei dispositivi in PostgreSQL e serve una dashboard web senza Supabase. La prima versione è in `hub/` e si avvia con la [procedura di fase 2](docs/fase-2-hub-ubuntu.md), che include un Rover e una Base simulati. La [fase 1](docs/fase-1-hub-ubuntu.md) raccoglie misure e definisce il formato dei dati. I comandi di teleoperazione e RTCM usano i collegamenti diretti.
+L'[hub su PC Ubuntu](docs/hub-ubuntu.md) conserva i dati dei dispositivi in PostgreSQL e serve la dashboard **Hub dispositivi**. Il codice in uso sull'HP è nel repository [HP-linux](https://github.com/st3oleg/HP-linux). La [procedura iniziale di fase 2](docs/fase-2-hub-ubuntu.md) documenta il prototipo con dispositivi simulati. La [fase 1](docs/fase-1-hub-ubuntu.md) raccoglie misure e definisce il formato dei dati. I comandi di teleoperazione e RTCM usano i collegamenti diretti.
 
 La pagina statica in `static/` è pubblicabile su Netlify tramite `netlify.toml`. Impostare `apiBaseUrl` in `static/runtime-config.js` a un endpoint HTTPS della Base raggiungibile dal browser Tailscale. Netlify da solo non rende pubbliche le API private Tailscale; per accesso senza VPN servirà un endpoint relay autenticato.
 

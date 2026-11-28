@@ -2,7 +2,7 @@
 
 ## Valutazione sintetica
 
-Un robot RTK può essere utile per mantenere erba e infestanti basse con passaggi frequenti, specialmente tra filari accessibili e con vegetazione non troppo alta. La tecnologia è plausibile; l'efficacia del robot di questo repository resta **non dimostrata**, perché non è ancora presente una macchina automatica di taglio né navigazione autonoma.
+Un robot RTK può essere utile per mantenere erba e infestanti basse con passaggi frequenti, specialmente tra filari accessibili e con vegetazione non troppo alta. La tecnologia è plausibile; l'efficacia del robot di questo repository resta **non dimostrata**. È presente un controllore sperimentale per una tratta in avanti supervisionata, ma non una macchina automatica di taglio né una missione completa validata in campo.
 
 **Giudizio per impiego:**
 
@@ -44,7 +44,7 @@ Capacità teorica di taglio per una macchina con larghezza utile `w` (m) e veloc
 
 ## Fattibilità tecnica
 
-RTK è appropriato per seguire linee ripetibili quando base/correzioni e geometria GNSS funzionano bene. Non è sufficiente come unico sensore di navigazione o sicurezza: può degradarsi sotto chiome o accanto a ostacoli, e il software attuale non controlla la freschezza né la qualità del fix prima di registrare. Servono localizzazione complementare, encoder, heading calibrato, limiti di velocità e modalità sicura su perdita del segnale.
+RTK è appropriato per seguire linee ripetibili quando base/correzioni e geometria GNSS funzionano bene. Non è sufficiente come unico sensore di navigazione o sicurezza: può degradarsi sotto chiome o accanto a ostacoli. Il registratore conserva qualità ed età del fix e accetta anche soluzioni non FIX recenti; il controllore sperimentale richiede FIX e correzioni fresche. Servono ancora localizzazione complementare, encoder, heading validato e una risposta di arresto verificata sul veicolo.
 
 Il telaio, il peso, la potenza e la larghezza di taglio non sono specificati in modo verificabile nel repository. Lo storico elenca componenti diversi e non allineati al codice. Di conseguenza non è ancora possibile dimensionare capacità, batteria, freni, stabilità, produttività o costo.
 

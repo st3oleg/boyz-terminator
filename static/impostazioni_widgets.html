@@ -6,6 +6,7 @@
     <title>Personalizzazione Widget - RTK GCS</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="runtime-config.js"></script>
     <script> tailwind.config = { darkMode: 'class', } </script>
 </head>
 <body class="bg-[#0f172a] text-slate-100 min-h-screen flex flex-col font-sans">
@@ -16,7 +17,7 @@
             <span class="text-blue-500 text-2xl">🧩</span> 
             <span>RTK<span class="text-blue-500 font-black">GCS</span> - Personalizza Widget</span>
         </div>
-        <a href="index.html" class="text-slate-400 hover:text-white font-medium transition text-sm flex items-center gap-1.5">
+        <a id="back-to-map" href="index.html" class="text-slate-400 hover:text-white font-medium transition text-sm flex items-center gap-1.5">
             ◀ Torna alla Mappa Live
         </a>
     </nav>
@@ -25,7 +26,7 @@
     <main class="flex-grow max-w-3xl w-full mx-auto p-6 mt-4 flex flex-col gap-6">
         <div>
             <h1 class="text-2xl font-black text-white">Configurazione Strumenti HUD</h1>
-            <p class="text-slate-400 text-xs mt-1">Seleziona quali widget telemetrici mostrare in sovrapposizione sulla Mappa Live. Le preferenze vengono salvate in locale sul tuo browser.</p>
+            <p class="text-slate-400 text-xs mt-1">Seleziona quali widget telemetrici mostrare in sovrapposizione sulla Mappa Live. <span id="widget-storage">Le preferenze vengono salvate in questo browser.</span></p>
         </div>
 
         <!-- Sezione Widget Rover Mobile -->
@@ -106,7 +107,7 @@
             Ripristina Configurazione Predefinita
         </button>
 
-        <div id="toast" class="fixed bottom-6 left-1/2 transform -translate-x-1/2 bg-blue-600 text-white px-5 py-2.5 rounded-full shadow-2xl opacity-0 transition-opacity duration-300 text-xs font-bold pointer-events-none">
+        <div id="toast" role="status" class="fixed bottom-6 left-1/2 transform -translate-x-1/2 bg-blue-600 text-white px-5 py-2.5 rounded-full shadow-2xl opacity-0 transition-opacity duration-300 text-xs font-bold pointer-events-none">
             Preferenza salvata
         </div>
     </main>
@@ -120,37 +121,94 @@
             { id: 'w_base_coords', defaultVal: false }
         ];
 
-        function loadAll() {
-            PREFS.forEach(p => {
-                const val = localStorage.getItem(p.id);
-                const el = document.getElementById(p.id);
-                if (el) {
-                    el.checked = val !== null ? val === 'true' : p.defaultVal;
+        const shared = window.TERMINATOR_CONFIG?.sharedMap === true;
+        const endpoint = '/api/v1/map/widgets';
+        const defaults = Object.fromEntries(PREFS.map(({ id, defaultVal }) => [id, defaultVal]));
+        let preferences = { ...defaults };
+        const controls = document.querySelectorAll('input[type="checkbox"], button');
+
+        if (shared) {
+            document.getElementById('widget-storage').textContent = 'Le preferenze sono condivise e salvate sull’HP.';
+        } else {
+            document.getElementById('back-to-map').href = 'index.html?locale=1';
+        }
+
+        function renderPreferences() {
+            for (const { id } of PREFS) {
+                document.getElementById(id).checked = preferences[id];
+            }
+        }
+
+        function setControlsEnabled(enabled) {
+            controls.forEach(control => { control.disabled = !enabled; });
+        }
+
+        async function loadAll() {
+            setControlsEnabled(false);
+            try {
+                if (shared) {
+                    const response = await fetch(endpoint, { signal: AbortSignal.timeout(4000) });
+                    if (!response.ok) throw new Error('HTTP ' + response.status);
+                    preferences = { ...defaults, ...await response.json() };
+                } else {
+                    for (const { id, defaultVal } of PREFS) {
+                        preferences[id] = (localStorage.getItem(id) ?? String(defaultVal)) === 'true';
+                    }
                 }
-            });
+                renderPreferences();
+                setControlsEnabled(true);
+            } catch (error) {
+                showToast('Impossibile caricare le preferenze. Ricarica la pagina per riprovare.');
+                console.error(error);
+            }
+        }
+
+        async function savePreferences(changes, message) {
+            setControlsEnabled(false);
+            try {
+                if (shared) {
+                    const response = await fetch(endpoint, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json', 'X-Map-Action': 'save-widgets' },
+                        body: JSON.stringify(changes),
+                        signal: AbortSignal.timeout(4000)
+                    });
+                    if (!response.ok) throw new Error('HTTP ' + response.status);
+                    preferences = { ...defaults, ...await response.json() };
+                } else {
+                    for (const [id, visible] of Object.entries(changes)) {
+                        localStorage.setItem(id, String(visible));
+                    }
+                    Object.assign(preferences, changes);
+                }
+                showToast(message);
+            } catch (error) {
+                showToast('Salvataggio delle preferenze non riuscito. Ricarica la pagina per verificare.');
+                console.error(error);
+            } finally {
+                renderPreferences();
+                setControlsEnabled(true);
+            }
         }
 
         function savePref(id, checked) {
-            localStorage.setItem(id, checked ? 'true' : 'false');
-            showToast("Preferenza aggiornata per la Mappa Live!");
+            savePreferences({ [id]: checked }, 'Preferenza aggiornata per la Mappa Live.');
         }
 
         function resetDefaults() {
-            PREFS.forEach(p => {
-                localStorage.setItem(p.id, p.defaultVal ? 'true' : 'false');
-            });
-            loadAll();
-            showToast("Configurazione predefinita ripristinata!");
+            savePreferences(defaults, 'Configurazione predefinita ripristinata.');
         }
 
+        let toastTimer;
         function showToast(msg) {
             const toast = document.getElementById('toast');
             toast.innerText = msg;
             toast.style.opacity = '1';
-            setTimeout(() => { toast.style.opacity = '0'; }, 2000);
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => { toast.style.opacity = '0'; }, 4000);
         }
 
-        window.addEventListener('DOMContentLoaded', loadAll);
+        loadAll();
     </script>
 </body>
 </html>

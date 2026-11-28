@@ -1,8 +1,8 @@
 # Calibrazione motori e dati delle tracce
 
-**Aggiornato:** 23 novembre 2026
+**Aggiornato:** 24 novembre 2026
 
-**Stato:** tre tracce manuali acquisite con RTK FIX e scaricate sul PC. I log confermano l'applicazione del trim ai comandi calcolati dal server. Lo slittamento delle ruote osservato durante le prove richiede nuove misure dopo la sostituzione delle ruote.
+**Stato:** dopo la riparazione delle ruote sono stati registrati tre passaggi manuali in avanti con RTK FIX. Le misure a 30% e 50% sono alla base di `profilo_guida.json`. Il profilo è sperimentale e la risposta in guida automatica deve ancora essere verificata sul Rover fisico.
 
 ## Trim differenziale
 
@@ -40,13 +40,27 @@ Il blocco `diagnostic_events` registra gli eventi di comando, trim, stop, dry-ru
 | --- | --- | ---: | --- |
 | `avantiDritto1_1795443165.json` | Avanti e retromarcia, trim `0%` | 49/49 | A `100/100` nominali, uscite SX/DX `100/100`. In avanti, variazione di yaw di circa 45° dopo 15 m. |
 | `avantiDrittoTrim10sx_1795443244.json` | Avanti e retromarcia, «+10 SX» | 58/58 | Il JSON registra trim `−10%`. A `100/100` nominali, uscite SX/DX `100/90` per saturazione di SX. In avanti, variazione di yaw di circa 60° dopo 15 m. |
-| `MappaComandoGiusta_1795443596.json` | Anello su prato con sterzate manuali | 134/134 | Traccia utile per esaminare la geometria del percorso. Esclusa dal confronto rettilineo. |
+| `MappaComandoGiusta_1795443596.json` | Andata e ritorno, come descritto dall'operatore | 134/134 | La prova Pure Pursuit usa solo la geometria dal punto 1 al 46 e la percorre in avanti. I PWM storici non sono usati per calibrare o ripetere i comandi. |
 
 Il confronto a circa 15 m usa lo yaw della IMU registrato rispetto alla partenza di ogni passaggio. Gli orientamenti iniziali e le lunghezze complessive differiscono. Le uscite nel JSON confermano che il software applica il trim. La dashboard mostra intenzionalmente i valori nominali; per verificare il trim si confrontano `motor_left_pct` / `motor_right_pct` con `motor_left_output_pct` / `motor_right_output_pct` e `motor_left_us` / `motor_right_us`.
 
 Durante le prove è stato segnalato che il copertone ruota sul cerchione e che le ruote scivolano sul terreno. Il GNSS registra il movimento del rover anche in presenza di slittamento. Queste tracce non permettono di isolare lo sbilanciamento dei motori o di scegliere un trim stabile.
 
-Dopo la sostituzione delle ruote, ripetere passaggi manuali in avanti della stessa lunghezza, sullo stesso fondo e con lo stesso allineamento iniziale. Confrontare prima trim `0%` e poi, in una prova separata, il trim `+5%` sullo slider, che favorisce DX. Tenere uguali i comandi nominali ed evitare correzioni di sterzo durante il tratto misurato. Il valore `80/80` discusso era un esempio per evitare la saturazione. Scegliere un gradino basso al quale il rover procede regolarmente. Valutare lo scostamento laterale da una retta di riferimento e la variazione di yaw sulla stessa distanza. La prova con trim è distinta dalla raccolta a trim zero per la curva velocità/comando.
+Per verificare il trim dopo la riparazione, servono passaggi manuali comparabili in avanti della stessa lunghezza, sullo stesso fondo e con lo stesso allineamento iniziale. Confrontare prima trim `0%` e poi, in una prova separata, il trim `+5%` sullo slider, che favorisce DX. Tenere uguali i comandi nominali ed evitare correzioni di sterzo durante il tratto misurato. Il valore `80/80` discusso era un esempio per evitare la saturazione. Scegliere un gradino basso al quale il rover procede regolarmente. Valutare lo scostamento laterale da una retta di riferimento e la variazione di yaw sulla stessa distanza. La prova con trim è distinta dalla raccolta a trim zero per la curva velocità/comando.
+
+## Misure con le ruote riparate
+
+Le tre registrazioni del 23 novembre sono salvate in `missions/`. Per le stime sono stati selezionati intervalli in avanti, con PWM stabile, trim zero, GNSS FIX e IMU recente.
+
+| File | PWM SX/DX | Punti FIX | Risultato |
+| --- | ---: | ---: | --- |
+| `20trattino20_1795449222.json` | 20/20 | 24/24 | Spostamento quasi nullo. Il livello è escluso dalla curva perché il movimento è dell'ordine del rumore GNSS. |
+| `30trattino30_1795449307.json` | 30/30 | 75/75 | Mediana 0,0835 m/s su 59 intervalli a 30%. Il file contiene anche comandi più alti, esclusi da questa stima. |
+| `50trattino50_1795449400.json` | 50/50 | 84/84 | Mediana 0,3352 m/s su 8 intervalli stabili, con valori tra 0,2969 e 0,3938 m/s. La stima per lato è 0,3390 m/s SX e 0,3302 m/s DX. |
+
+Le velocità SX e DX sono stime ottenute dalla velocità GNSS e dalla variazione di yaw IMU, assumendo una carreggiata di 0,68 m e un modello differenziale. Il valore di carreggiata è quello del modello `robot_reale.wbt`. La stima risente dello slittamento sul fondo e non misura il regime delle ruote. Il confronto delle direzioni di spostamento nelle tracce conferma il segno `imu_yaw_sign: +1` nella convenzione est/nord del controllore.
+
+La registrazione a 50% termina con uno `watchdog_stop`. L'operatore ha riferito di aver provato separatamente il pulsante fisico tre volte. Il profilo riporta la sua conferma. La registrazione GNSS a circa 1 Hz non consente di misurare con precisione la distanza di arresto del pulsante.
 
 ## Ricavare una curva velocità/comando
 
@@ -72,15 +86,15 @@ Procedura per acquisire i dati:
 python3 /home/terminator/Documents/tools/analyze_motor_calibration.py /home/terminator/Documents/missions/<nome_traccia>.json
 ```
 
-Lo script scrive `<nome_traccia>.calibration.csv` accanto al JSON. L'analisi richiede i campi motore, assenti nella traccia storica `Fix_1.json`. Per costruire una curva da usare sul Rover, servono passaggi validi con le ruote nuove.
+Lo script scrive `<nome_traccia>.calibration.csv` accanto al JSON. L'analisi richiede i campi motore, assenti nella traccia storica `Fix_1.json`. Il CSV misura la velocità del telaio. Le stime separate SX/DX del profilo usano anche lo yaw IMU.
 
-Se il campo presenta molte buche, scegliere prima un rettilineo il più possibile regolare e sicuro. Fare 2–3 passaggi comparabili, eventualmente nei due versi, permette di individuare valori anomali; ripetere gli stessi sobbalzi non elimina l'effetto sistematico del terreno su trazione e assetto. Annotare ed escludere i segmenti con sobbalzi marcati o perdita di `FIX`. Se non esiste un tratto adatto, usare la sessione solo come diagnostica a bassa velocità e rimandare la stima della curva. Tenere l'apparato di taglio disabilitato e pronto l'arresto. La registrazione accetta anche punti `SINGLE`/`FLOAT`: prima dell'analisi controllare la qualità di ogni campione. Per avvio RTCM e diagnosi del mancato FIX, vedere il [README operativo](../README.md#se-non-arriva-fix).
+Se il campo presenta molte buche, scegliere prima un rettilineo il più possibile regolare e sicuro. Fare 2–3 passaggi comparabili, eventualmente nei due versi, permette di individuare valori anomali; ripetere gli stessi sobbalzi non elimina l'effetto sistematico del terreno su trazione e assetto. Annotare ed escludere i segmenti con sobbalzi marcati o perdita di `FIX`. Se non esiste un tratto adatto, usare la sessione solo come diagnostica a bassa velocità e rimandare la stima della curva. Tenere l'apparato di taglio disabilitato e pronto l'arresto. La registrazione accetta anche punti `SINGLE`/`FLOAT`: prima dell'analisi controllare la qualità di ogni campione. Per avvio RTCM e diagnosi del mancato FIX, vedere [Analisi e verifica GPS RTK](gap_analisi_risoluzione_GPSRTK.md#procedura-ripetibile).
 
-## Uso futuro con Pure Pursuit
+## Profilo per Pure Pursuit
 
-`modules/pure_pursuit.py` calcola target e curvatura geometrica; non invia ancora comandi agli attuatori. Una volta misurata e revisionata, la curva potrà convertire la velocità richiesta dal controllore nel comando nominale motore (lookup o interpolazione). Il trim verrà applicato successivamente, al confine del driver, per correggere una differenza fra i lati. La curva attuale è solo diagnostica e non viene applicata automaticamente.
+`profilo_guida.json` contiene i punti `[m/s, PWM %]` a 0%, 30% e 50% per ciascun lato. Il controllore da terminale interpola le curve, applica una rampa di 20 punti percentuali al secondo e passa i comandi a `MotorDriver`. Il trim della dashboard resta nella configurazione della teleoperazione. Nel controllore la risposta diversa dei due lati è rappresentata direttamente dalle due curve.
 
-Prima di abilitare il controllo automatico restano da integrare il loop di controllo, la gestione di velocità e sterzata per il differenziale, limiti e rampe, validità/freschezza RTK, arresto su perdita GNSS/RTCM e verifiche di sicurezza indipendenti.
+Il profilo imposta crociera a **0,27 m/s**, limite GNSS a **0,50 m/s**, tetto a **50% PWM per lato** e margine geofence a **2 m**. Sono parametri iniziali per il collaudo supervisionato. Le curve non coprono la retromarcia. Comandi e stato della prova sono nella [guida di riproduzione](riproduzione-traccia.md#controllore-locale-sul-raspberry).
 
 ## Simulazione Webots su Fix_1
 
@@ -92,6 +106,7 @@ In questa simulazione i punti `FIX` rappresentano soltanto che le correzioni son
 
 - `telemetry_server.py`: trim, persistenza, metriche nei punti, eventi diagnostici e payload di telemetria.
 - `static/autopilota.html`: cursore trim e visualizzazione separata dai comandi nominali.
-- `modules/pure_pursuit.py`: geometria Pure Pursuit senza collegamento agli attuatori.
+- `modules/pure_pursuit.py`: geometria Pure Pursuit condivisa da Webots, anteprima e controllore.
+- `modules/follow_route.py` e `profilo_guida.json`: controllo supervisionato in avanti e calibrazione sperimentale.
 - `tools/analyze_motor_calibration.py`: estrazione CSV passiva.
 - `missions/Fix_1.json`: traccia FIX storica senza campi potenza motore.

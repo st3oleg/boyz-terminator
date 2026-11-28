@@ -1,16 +1,30 @@
 # Architettura RTK Base / Rover
 
-**Stato:** flusso RTCM e RTK FIX verificati con test manuale; installazione e verifica della versione d'integrazione completa restano da confermare.
+**Stato:** flusso RTCM, FIX da fermo e avvio su richiesta dall'Hub verificati sul Raspberry Rover il 27 novembre 2026.
 
-**Aggiornato:** 23 novembre 2026.
+**Aggiornato:** 27 novembre 2026.
+
+L'HP Ubuntu ospita **Hub dispositivi**. La distribuzione via Netlify/API Base descritta più avanti è una proposta precedente. L'Hub usa HTTP per attendere l'apertura della pagina Rover. Il flusso di correzioni va direttamente dalla Base al Rover via Tailscale.
+
+## Percorsi operativi
+
+| Percorso | Funzione |
+| --- | --- |
+| Ricevitore Base → seriale Base → TCP `5000` via Tailscale → Raspberry Rover → seriale GNSS Rover | Il riferimento RTCM 1005 e le osservazioni MSM4 arrivano al ricevitore Rover. Nella prova in FLOAT, il GGA del Rover ha riportato stazione `3335` ed età differenziale di 1–2 s. |
+| Rover → `GET /api/state` sulla Base → WebSocket Rover → mappa | Aggiorna il marker della Base. Il Rover legge la posizione a intervalli di 5 secondi dopo ogni richiesta. Le coordinate manuali sono facoltative e fungono da riserva. |
+| HP → porta `8080` del Rover → socket systemd → server Rover | La prima connessione avvia il servizio. L'Hub aspetta una risposta dalla pagina e poi la apre nel browser. |
+| Rover → `POST /api/rover` sulla Base | Invia la telemetria Rover alla Base con `BASE_API_TOKEN`. In una prova è stato registrato HTTP 401 per questo uplink mentre il flusso TCP RTCM continuava. |
+| Rover → `POST /api/v1/events` sull'HP | Integrazione opzionale via HTTPS con `ROVER_HUB_URL`, `ROVER_HUB_DEVICE_ID` e `ROVER_HUB_TOKEN`. Invia lo stato circa ogni 10 s e gli indici delle missioni tramite coda SQLite locale. |
+
+La ripartenza dall'Hub e il FIX stabile da fermo sono stati confermati dall'operatore. La causa del precedente FLOAT persistente resta aperta. Per installare il socket e ripetere la prova, segui il [README Rover](../README.md#avvio-su-richiesta-dallhub) e la [guida diagnostica](gap_analisi_risoluzione_GPSRTK.md#verifica-del-27-novembre-2026).
 
 ## Aggiornamento dal campo, 20–23 novembre 2026
 
 L'utente ha mostrato `base.service` **active (running)** dal 16 novembre sul Raspberry Base, con `/home/antenna/Documents/base_manager.py` (PID 1521), messaggi RTCM 1005 ripetuti con coordinate `45.9047663, 12.4374086` e porta TCP `0.0.0.0:5000` in ascolto. L'indirizzo Tailscale riportato era `100.85.248.82`; dal Rover `nc -vz -w 3 100.85.248.82 5000` è riuscito. Queste sono osservazioni datate, non una verifica continua del servizio né del contenuto dei frame ricevuti dal Rover.
 
-La UI Rover mostrava **Correzioni RTCM: non configurate** quando `telemetry_server.py` era stato avviato senza `BASE_TAILSCALE_HOST`. Dopo l'avvio manuale con `BASE_TAILSCALE_HOST=100.85.248.82`, `BASE_RTCM_PORT=5000` e le coordinate Base per il marker, l'utente ha riferito di aver ottenuto `FIX`. Il 23 novembre ha riferito di non riuscire a riottenere `FIX`; durante questa verifica la UI mostrava di nuovo **non configurate**, mentre la connessione TCP alla porta 5000 riusciva. Non è stato ancora comunicato lo stato RTK dopo l'ultimo riavvio con le variabili, né è stata dimostrata la stabilità del FIX in movimento. La procedura aggiornata è nel [README operativo](../README.md#se-non-arriva-fix).
+La UI Rover mostrava **Correzioni RTCM: non configurate** quando `telemetry_server.py` era stato avviato senza `BASE_TAILSCALE_HOST`. Dopo l'avvio manuale con `BASE_TAILSCALE_HOST=100.85.248.82`, `BASE_RTCM_PORT=5000` e le coordinate Base per il marker, l'utente ha riferito di aver ottenuto `FIX`. Il 23 novembre ha riferito di non riuscire a riottenere `FIX`; durante questa verifica la UI mostrava di nuovo **non configurate**, mentre la connessione TCP alla porta 5000 riusciva. Le prove successive descritte nella [guida di riproduzione](riproduzione-traccia.md#stato-del-collaudo-sul-rover) mostrano un avvio del controllore da terminale con FIX, RTCM e IMU; non dimostrano la stabilità del FIX in movimento. La procedura diagnostica è in [Analisi e verifica GPS RTK](gap_analisi_risoluzione_GPSRTK.md#procedura-ripetibile).
 
-Le descrizioni storiche più sotto, che riportano il servizio Base fermo e il nuovo codice non installato, si riferiscono alle verifiche precedenti al 20 novembre. Il processo Base osservato attivo non è stato confrontato byte per byte con il sorgente locale; l'installazione dell'intera integrazione API/frontend resta da verificare.
+Le descrizioni storiche più sotto, che riportano il servizio Base fermo e il nuovo codice non installato, si riferiscono alle verifiche precedenti al 20 novembre. Resta da confrontare il file in esecuzione sulla Base con il sorgente locale byte per byte. Il collaudo del 27 novembre ha verificato il percorso RTCM e la posizione Base sulla mappa Rover.
 
 ## Obiettivo concordato
 
@@ -25,17 +39,17 @@ Le descrizioni storiche più sotto, che riportano il servizio Base fermo e il nu
 
 ### Rover
 
-Il repository `boyz-terminator-main` contiene `telemetry_server.py`, che serve UI e telemetria Rover su HTTP/WebSocket, e `modules/gps.py`, che legge NMEA da `/dev/ttyS0` a 115200 baud. Il modulo interpreta GGA/RMC e lo stato FIX/FLOAT/SINGLE. `modules/rtcm_client.py` mantiene una connessione TCP RTCM con riconnessione e `GPSReader` coordina lettura NMEA e scrittura RTCM sulla stessa seriale. Il server include un uplink HTTP configurabile verso la Base. È stato verificato manualmente il flusso TCP con CRC valido e il test seriale ha raggiunto RTK FIX; la versione completa d'integrazione resta da verificare sul Raspberry.
+Il repository `boyz-terminator-main` contiene `telemetry_server.py`, che serve UI e telemetria Rover su HTTP/WebSocket, e `modules/gps.py`, che legge NMEA da `/dev/ttyS0` a 115200 baud. Il modulo interpreta GGA/RMC e lo stato FIX/FLOAT/SINGLE. `modules/rtcm_client.py` mantiene una connessione TCP RTCM con riconnessione e `GPSReader` coordina lettura NMEA e scrittura RTCM sulla stessa seriale. Il server include un uplink HTTP configurabile verso la Base. I controlli del 27 novembre hanno verificato la ricezione delle correzioni e il FIX da fermo con il server avviato su richiesta.
 
 Il server registra ora punti con qualità/freschezza GNSS, RTCM, IMU e comandi motore. L'interfaccia include un trim differenziale persistente applicato prima del driver; le potenze nominali mostrate e quelle effettivamente inviate sono conservate separatamente. La procedura per misurare la relazione comando/velocità è documentata in [Calibrazione motori e dati delle tracce](calibrazione-motori-e-tracce.md). Non è un componente del trasporto RTCM e non prova l'accuratezza della localizzazione.
 
 ### Base
 
-Il sorgente operativo fornito dall'utente è `/home/antenna/Documents/base_manager.py`. Una nuova versione locale è stata aggiunta in `antenna-main/base_manager.py`: legge `/dev/serial0` a 115200 baud, verifica il CRC RTCM, inoltra i frame sulla porta TCP 5000, ricava le coordinate da RTCM 1005/1006 o NMEA GGA e fornisce API HTTP sulla porta 8080. La API memorizza lo stato Base e l'ultima telemetria Rover in SQLite. Non è stata installata sul Raspberry.
+Il sorgente operativo fornito dall'utente è `/home/antenna/Documents/base_manager.py`. Una nuova versione locale è nel repository fratello `../boyz-antenna-main/base_manager.py`: legge `/dev/serial0` a 115200 baud, verifica il CRC RTCM, inoltra i frame sulla porta TCP 5000, ricava le coordinate da RTCM 1005/1006 o NMEA GGA e fornisce API HTTP sulla porta 8080. La API memorizza lo stato Base e l'ultima telemetria Rover in SQLite. L'installazione di questa specifica versione sul Raspberry non è confermata.
 
 La lettura manuale della seriale ha mostrato frame con preambolo RTCM3 `D3`; tra gli header osservati compare il tipo 1005, che trasporta il riferimento ECEF della stazione. Questo prova che il ricevitore emette frame compatibili con RTCM3; non prova ancora che il demone TCP funzioni né che il Rover riceva le correzioni.
 
-Il servizio remoto `base.service` è stato osservato in `auto-restart` con `SyntaxError: bytes can only contain ASCII literal characters`, dovuto al carattere Unicode `…` dentro `PAGINA_DI_TEST = b"..."`. L'utente ha poi fermato il servizio. Il repository locale contiene ora `antenna-main/base.service` e il nuovo server corretto, ma il servizio remoto resta fermo finché i file non vengono installati e avviati manualmente.
+In una verifica precedente al 20 novembre il servizio remoto `base.service` era in `auto-restart` con `SyntaxError: bytes can only contain ASCII literal characters`, dovuto al carattere Unicode `…` dentro `PAGINA_DI_TEST = b"..."`. L'utente lo aveva poi fermato. La verifica del 20–23 novembre riportata sopra ha invece osservato `base.service` attivo; non è confermato che esegua il sorgente del repository fratello.
 
 Nel testo del sorgente incollato alcune escape appaiono raddoppiate, ad esempio `b"\\xD3"` e `"\\r\\n"`. Se la rappresentazione corrisponde ai byte effettivi del file, il parser cercherebbe i caratteri letterali `\\xD3` invece del preambolo e le risposte HTTP/WebSocket non conterrebbero CRLF reali. Va verificato sul file locale prima di intervenire.
 
@@ -107,11 +121,11 @@ Variabili Rover previste: `BASE_TAILSCALE_HOST`, `BASE_RTCM_PORT` (default `5000
 
 ### Repository Base
 
-- `antenna-main/base_manager.py`: lettore RTCM/NMEA, inoltro TCP, API `GET /api/state` e `POST /api/rover`, posizione Base da RTCM 1005/1006 e archivio SQLite.
-- `antenna-main/base.service`: unità systemd da copiare e abilitare sul Raspberry Base.
-- `antenna-main/README.md`: installazione e variabili d'ambiente Base.
+- `../boyz-antenna-main/base_manager.py`: lettore RTCM/NMEA, inoltro TCP, API `GET /api/state` e `POST /api/rover`, posizione Base da RTCM 1005/1006 e archivio SQLite.
+- `../boyz-antenna-main/base.service`: unità systemd da copiare e abilitare sul Raspberry Base.
+- `../boyz-antenna-main/README.md`: installazione e variabili d'ambiente Base.
 
-La Base richiede `ROVER_API_TOKEN` per POST Rover e `ALLOWED_ORIGINS` per le origini browser consentite. Il DB locale predefinito è `/home/antenna/Documents/base_state.sqlite3`. Nessuno di questi file è stato installato sul Raspberry o provato con i ricevitori reali.
+La Base richiede `ROVER_API_TOKEN` per POST Rover e `ALLOWED_ORIGINS` per le origini browser consentite. Il DB locale predefinito è `/home/antenna/Documents/base_state.sqlite3`. Sul Raspberry Base sono state osservate risposte da `GET /api/state` e la distribuzione di correzioni RTCM su TCP 5000. La corrispondenza byte per byte con il clone locale resta da verificare.
 
 ## Piano di lavoro
 
@@ -137,7 +151,7 @@ Pubblicare la pagina statica su Netlify. Impostare `apiBaseUrl` in `static/runti
 
 ## Struttura repository consigliata
 
-Tenere `boyz-terminator-main` e `antenna-main` come repository separati: il software Rover e quello Base vengono installati e aggiornati su Raspberry diversi. Conservare in questo repository la vista d'insieme e i requisiti d'integrazione; mettere nel repository antenna il demone Base, l'unità systemd e le istruzioni operative Base. Il protocollo RTCM/TCP e il contratto API devono avere una versione documentata e coerente in entrambi.
+Tenere `boyz-terminator-main` e `boyz-antenna-main` come repository separati: il software Rover e quello Base vengono installati e aggiornati su Raspberry diversi. Conservare in questo repository la vista d'insieme e i requisiti d'integrazione; mettere nel repository antenna il demone Base, l'unità systemd e le istruzioni operative Base. Il protocollo RTCM/TCP e il contratto API devono avere una versione documentata e coerente in entrambi.
 
 ## Criteri di completamento
 
